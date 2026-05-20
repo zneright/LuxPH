@@ -40,3 +40,4 @@ jobs:
           VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
           FIREBASE_CLI_EXPERIMENTS: webframeworks
+          # Adding this comment to force a redeploy
