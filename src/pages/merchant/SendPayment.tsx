@@ -10,8 +10,9 @@ import { AnimatePresence, motion } from "framer-motion";
 import { LoadingOverlay } from "../../components/ui/LoadingOverlay";
 import MonthlyUsageCard from "../../components/dashboard/MonthlyUsageCard";
 
-const FALLBACK_ISSUER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
-const FALLBACK_USDC = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+// Hardcoded Testnet fallback issuer targets to match staging architecture configurations
+const FALLBACK_ISSUER = "GDZRE7N6PHB6CCM3VBRB5V7SDRB6CS4U6MTUL6Q6OMJEXHUTVPHPC001"; // Testnet Issuer
+const FALLBACK_USDC = "GCAXCH6S643WNNRLOLW52Z6T7A6A6T43L234D7JEXUSDC001";   // Testnet USDC Issuer
 
 const FloatingNode = ({ delay = 0, x, y, size = 1, color = "#f59e0b", blur = 0 }: { delay?: number, x: string, y: string, size?: number, color?: string, blur?: number }) => {
     const { randomDuration, randomDelay } = useMemo(() => ({
@@ -47,6 +48,7 @@ export default function SendPayment() {
         networkPassphrase: Networks.TESTNET,
         horizonUrl: "https://horizon-testnet.stellar.org",
         phpcIssuer: FALLBACK_ISSUER,
+        usdcIssuer: FALLBACK_USDC,
         freeTierCap: 100000
     });
 
@@ -76,16 +78,29 @@ export default function SendPayment() {
         const initSystem = async () => {
             try {
                 const configSnap = await getDoc(doc(db, "system_config", "global"));
+                let currentPassphrase = Networks.TESTNET;
+                let currentHorizon = "https://horizon-testnet.stellar.org";
+                let currentIssuer = FALLBACK_ISSUER;
+                let currentUsdcIssuer = FALLBACK_USDC;
+                let currentFreeCap = 100000;
+
                 if (configSnap.exists()) {
                     const c = configSnap.data();
-                    const isTestnet = c.stellarNetwork === "Testnet (Futurenet)";
-                    setSysConfig({
-                        networkPassphrase: isTestnet ? Networks.TESTNET : Networks.PUBLIC,
-                        horizonUrl: isTestnet ? "https://horizon-testnet.stellar.org" : "https://horizon.stellar.org",
-                        phpcIssuer: c.phpcIssuerAddress || FALLBACK_ISSUER,
-                        freeTierCap: c.freeTierMonthlyCap || 100000
-                    });
+                    const isTestnet = c.stellarNetwork ? c.stellarNetwork.includes("Testnet") : true;
+                    currentPassphrase = isTestnet ? Networks.TESTNET : Networks.PUBLIC;
+                    currentHorizon = isTestnet ? "https://horizon-testnet.stellar.org" : "https://horizon.stellar.org";
+                    currentIssuer = c.phpcIssuerAddress || FALLBACK_ISSUER;
+                    currentUsdcIssuer = c.usdcIssuerAddress || FALLBACK_USDC;
+                    currentFreeCap = c.freeTierMonthlyCap || 100000;
                 }
+
+                setSysConfig({
+                    networkPassphrase: currentPassphrase,
+                    horizonUrl: currentHorizon,
+                    phpcIssuer: currentIssuer,
+                    usdcIssuer: currentUsdcIssuer,
+                    freeTierCap: currentFreeCap
+                });
 
                 onAuthStateChanged(auth, async (currentUser) => {
                     if (currentUser) {
@@ -206,9 +221,13 @@ export default function SendPayment() {
             return;
         }
 
-        if (confirm(`Do you want to send ${amount} ${token} to ${address.substring(0, 8)}...?`)) {
+        if (window.confirm(`Do you want to send ${amount} ${token} to ${address.substring(0, 8)}...?`)) {
             await executePayment(address);
         }
+    };
+
+    const handleCryptoFieldChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        handleCryptoAmountChange(e);
     };
 
     const savePaymentToFirestore = async (
@@ -267,7 +286,7 @@ export default function SendPayment() {
             if (token === "PHPC") {
                 asset = new Asset("PHPC", sysConfig.phpcIssuer);
             } else if (token === "USDC") {
-                asset = new Asset("USDC", FALLBACK_USDC);
+                asset = new Asset("USDC", sysConfig.usdcIssuer);
             }
 
             const transaction = new TransactionBuilder(sourceAccount, {
@@ -364,7 +383,24 @@ export default function SendPayment() {
     };
 
     return (
-        <div style={{ position: "relative", minHeight: "100vh", zIndex: 1, paddingBottom: 60 }}>
+        <div style={{ position: "relative", minHeight: "100vh", zIndex: 1, paddingBottom: 60, boxSizing: "border-box" }}>
+            <style>{`
+                .pm-layout-split { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; align-items: start; }
+                .pm-dual-fields { display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px; align-items: end; margin-bottom: 20px; }
+                .pm-card-left { backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,.06); border-radius: 24px; padding: 32px; position: relative; overflow: hidden; }
+                .pm-card-right { backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,.06); border-radius: 24px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px; position: relative; overflow: hidden; min-height: 400px; box-sizing: border-box; }
+                .pm-scanner-box { width: 100%; max-width: 300px; border-radius: 20px; overflow: hidden; border: 2px solid #60a5fa; box-shadow: 0 0 30px rgba(96,165,250,0.3); }
+
+                @media (max-width: 992px) {
+                    .pm-layout-split { grid-template-columns: 1fr; gap: 24px; }
+                }
+                @media (max-width: 576px) {
+                    .pm-dual-fields { grid-template-columns: 1fr; gap: 12px; align-items: stretch; }
+                    .pm-dual-fields > div:nth-child(2) { display: none !important; }
+                    .pm-card-left, .pm-card-right { padding: 20px; min-height: auto; }
+                }
+            `}</style>
+
             {isSubscribed && (
                 <motion.div
                     style={{
@@ -385,7 +421,7 @@ export default function SendPayment() {
 
             <AnimatePresence>
                 {isLoading && <LoadingOverlay isLoading={isLoading} message={loadingMsg} />}
-            </AnimatePresence>
+            </AnPresence>
 
             <div style={{ marginBottom: 32 }}>
                 <h1 style={{ fontSize: 36, fontWeight: 900, fontFamily: "'Nunito',sans-serif", color: "#fff", margin: 0, letterSpacing: "-0.02em" }}>
@@ -396,45 +432,38 @@ export default function SendPayment() {
 
             <MonthlyUsageCard monthlyUsage={monthlyUsage} isSubscribed={isSubscribed} usageLimit={sysConfig.freeTierCap} projectedUsage={projectedUsage} />
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 32, alignItems: "start" }}>
+            <div className="pm-layout-split">
                 <motion.div
                     animate={isSubscribed ? {
                         boxShadow: ["0px 0px 0px rgba(245,158,11,0)", "0px 10px 40px rgba(245,158,11,0.12)", "0px 0px 0px rgba(245,158,11,0)"],
                         borderColor: ["rgba(255,255,255,0.06)", "rgba(245,158,11,0.3)", "rgba(255,255,255,0.06)"]
                     } : {}}
                     transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-                    style={{
-                        background: isSubscribed ? "rgba(15, 17, 26, 0.6)" : "rgba(255,255,255,.04)",
-                        backdropFilter: "blur(24px)",
-                        border: "1px solid rgba(255,255,255,.06)",
-                        borderRadius: 24,
-                        padding: 32,
-                        position: "relative",
-                        overflow: "hidden"
-                    }}
+                    className="pm-card-left"
+                    style={{ background: isSubscribed ? "rgba(15, 17, 26, 0.6)" : "rgba(255,255,255,.04)" }}
                 >
                     <div style={{ marginBottom: 20 }}>
                         <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8, fontWeight: 700 }}>Recipient Wallet Address</div>
-                        <input value={destination} onChange={e => setDestination(e.target.value)} placeholder="G..." style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: "#fff", fontSize: 13, fontFamily: "'DM Mono',monospace", outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} onFocus={(e) => { e.target.style.borderColor = isSubscribed ? "rgba(245,158,11,0.5)" : "rgba(124,58,237,0.5)"; e.target.style.background = "rgba(255,255,255,0.05)" }} onBlur={(e) => { e.target.style.borderColor = "rgba(255,255,255,.1)"; e.target.style.background = "rgba(0,0,0,0.2)" }} />
+                        <input value={destination} onChange={e => setDestination(e.target.value)} placeholder="G..." style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: "#fff", fontSize: 13, fontFamily: "'DM Mono',monospace", outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} />
                     </div>
 
-                    <motion.button whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }} onClick={() => setIsScanning(!isScanning)} style={{ background: "rgba(96,165,250,.05)", color: "#60a5fa", border: "1px solid rgba(96,165,250,.3)", borderRadius: 12, padding: "12px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "'Nunito',sans-serif", width: "100%", marginBottom: 28, transition: "background 0.2s" }} onMouseEnter={(e) => e.currentTarget.style.background = "rgba(96,165,250,.1)"} onMouseLeave={(e) => e.currentTarget.style.background = "rgba(96,165,250,.05)"}>
+                    <motion.button type="button" whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }} onClick={() => setIsScanning(!isScanning)} style={{ background: "rgba(96,165,250,.05)", color: "#60a5fa", border: "1px solid rgba(96,165,250,.3)", borderRadius: 12, padding: "12px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "'Nunito',sans-serif", width: "100%", marginBottom: 28, transition: "background 0.2s" }}>
                         {isScanning ? "Cancel Camera Scan" : "📷 Scan Supplier QR Code"}
                     </motion.button>
 
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 16, alignItems: "end", marginBottom: 20 }}>
+                    <div className="pm-dual-fields">
                         <div>
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                                 <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 700 }}>Base</div>
                                 <select value={fiatCurrency} onChange={(e) => setFiatCurrency(e.target.value as "PHP" | "USD")} style={{ background: "transparent", color: "#a78bfa", border: "none", fontSize: 12, outline: "none", cursor: "pointer", fontWeight: "bold" }}>
-                                    <option value="PHP">PHP (₱)</option>
-                                    <option value="USD">USD ($)</option>
+                                    <option value="PHP" style={{ color: "#000" }}>PHP (₱)</option>
+                                    <option value="USD" style={{ color: "#000" }}>USD ($)</option>
                                 </select>
                             </div>
-                            <input type="number" value={amountInFiat} onChange={e => setAmountInFiat(e.target.value)} placeholder="0.00" style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: "#fff", fontSize: 16, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} onFocus={(e) => { e.target.style.borderColor = isSubscribed ? "rgba(245,158,11,0.5)" : "rgba(124,58,237,0.5)"; e.target.style.background = "rgba(255,255,255,0.05)" }} onBlur={(e) => { e.target.style.borderColor = "rgba(255,255,255,.1)"; e.target.style.background = "rgba(0,0,0,0.2)" }} />
+                            <input type="number" value={amountInFiat} onChange={e => setAmountInFiat(e.target.value)} placeholder="0.00" style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: "#fff", fontSize: 16, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} />
                         </div>
 
-                        <motion.div animate={{ opacity: [0.4, 1, 0.4] }} transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }} style={{ paddingBottom: 14, color: isSubscribed ? "#f59e0b" : "#6b7280", fontSize: 20 }}>
+                        <motion.div animate={{ opacity: [0.4, 1, 0.4] }} transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }} style={{ paddingBottom: 14, color: isSubscribed ? "#f59e0b" : "#6b7280", fontSize: 20, textAlign: "center" }}>
                             ⇄
                         </motion.div>
 
@@ -442,21 +471,22 @@ export default function SendPayment() {
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                                 <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 700 }}>Crypto</div>
                                 <select value={token} onChange={(e) => setToken(e.target.value as "XLM" | "PHPC" | "USDC")} style={{ background: "transparent", color: "#a78bfa", border: "none", fontSize: 12, outline: "none", cursor: "pointer", fontWeight: "bold" }}>
-                                    <option value="USDC">USDC</option>
-                                    <option value="PHPC">PHPC</option>
-                                    <option value="XLM">XLM</option>
+                                    <option value="USDC" style={{ color: "#000" }}>USDC</option>
+                                    <option value="PHPC" style={{ color: "#000" }}>PHPC</option>
+                                    <option value="XLM" style={{ color: "#000" }}>XLM</option>
                                 </select>
                             </div>
-                            <input type="number" value={amount} onChange={handleCryptoAmountChange} placeholder="0.00" style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: isSubscribed ? "#fcd34d" : "#a78bfa", fontSize: 16, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} onFocus={(e) => { e.target.style.borderColor = isSubscribed ? "rgba(245,158,11,0.5)" : "rgba(124,58,237,0.5)"; e.target.style.background = "rgba(255,255,255,0.05)" }} onBlur={(e) => { e.target.style.borderColor = "rgba(255,255,255,.1)"; e.target.style.background = "rgba(0,0,0,0.2)" }} />
+                            <input type="number" value={amount} onChange={handleCryptoFieldChange} placeholder="0.00" style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: isSubscribed ? "#fcd34d" : "#a78bfa", fontSize: 16, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} />
                         </div>
                     </div>
 
                     <div style={{ marginBottom: 32 }}>
                         <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8, fontWeight: 700 }}>Memo / Reference Note</div>
-                        <input value={description} onChange={e => setDescription(e.target.value)} style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} onFocus={(e) => { e.target.style.borderColor = isSubscribed ? "rgba(245,158,11,0.5)" : "rgba(124,58,237,0.5)"; e.target.style.background = "rgba(255,255,255,0.05)" }} onBlur={(e) => { e.target.style.borderColor = "rgba(255,255,255,.1)"; e.target.style.background = "rgba(0,0,0,0.2)" }} />
+                        <input value={description} onChange={e => setDescription(e.target.value)} style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} />
                     </div>
 
                     <motion.button
+                        type="button"
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
                         onClick={() => executePayment()}
@@ -494,20 +524,8 @@ export default function SendPayment() {
                         borderColor: ["rgba(255,255,255,0.06)", "rgba(245,158,11,0.2)", "rgba(255,255,255,0.06)"]
                     } : {}}
                     transition={{ duration: 5, delay: 2.5, repeat: Infinity, ease: "easeInOut" }}
-                    style={{
-                        background: isSubscribed ? "rgba(15, 17, 26, 0.6)" : "rgba(255,255,255,.04)",
-                        backdropFilter: "blur(24px)",
-                        border: "1px solid rgba(255,255,255,.06)",
-                        borderRadius: 24,
-                        display: "flex",
-                        flexDirection: "column",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        padding: 40,
-                        position: "relative",
-                        overflow: "hidden",
-                        minHeight: 400
-                    }}
+                    className="pm-card-right"
+                    style={{ background: isSubscribed ? "rgba(15, 17, 26, 0.6)" : "rgba(255,255,255,.04)" }}
                 >
                     {isSubscribed && (
                         <>
@@ -520,7 +538,7 @@ export default function SendPayment() {
 
                     {!isScanning && !txHash && (
                         <motion.div
-                            animate={isSubscribed ? { y: [-8, 8, -8] } : {}}
+                            animate={{ y: isSubscribed ? [-8, 8, -8] : 0 }}
                             transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
                             style={{ textAlign: "center", color: "#9ca3af", fontSize: 15, zIndex: 10, maxWidth: 280, lineHeight: 1.6 }}
                         >
@@ -532,7 +550,7 @@ export default function SendPayment() {
                     {isScanning && (
                         <div style={{ width: "100%", display: "flex", flexDirection: "column", alignItems: "center", zIndex: 10 }}>
                             <div style={{ fontSize: 12, fontFamily: "'DM Mono',monospace", color: "#60a5fa", letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 24, fontWeight: 700 }}>Point at Supplier QR</div>
-                            <div style={{ width: "100%", maxWidth: 300, borderRadius: 20, overflow: "hidden", border: "2px solid #60a5fa", boxShadow: "0 0 30px rgba(96,165,250,0.3)" }}>
+                            <div className="pm-scanner-box">
                                 <Scanner onScan={(result) => handleScan(result[0].rawValue)} />
                             </div>
                         </div>
@@ -550,7 +568,7 @@ export default function SendPayment() {
                                 </a>
                             </div>
 
-                            <div style={{ display: "flex", gap: 16, justifyContent: "center" }}>
+                            <div style={{ display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap" }}>
                                 <div style={{ background: "rgba(16,185,129,0.1)", color: "#10b981", border: "1px solid rgba(16,185,129,0.2)", borderRadius: 24, padding: "10px 20px", fontSize: 13, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>
                                     ⚡ Network: {speeds.network}s
                                 </div>

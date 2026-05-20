@@ -9,9 +9,6 @@ import { StatCard } from "../../components/dashboard/StatCard";
 import { LoadingOverlay } from "../../components/ui/LoadingOverlay";
 import { AnimatePresence } from "framer-motion";
 
-const HORIZON_URL = "https://horizon-testnet.stellar.org";
-
-// Unified Interface for Dashboard
 interface RecentTx {
   id: string;
   type: "Received" | "Sent" | "Cashout";
@@ -27,22 +24,18 @@ export default function DashboardOverview() {
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(true);
 
-  // Merchant Profile States
   const [merchantName, setMerchantName] = useState("Merchant");
   const [merchantAddress, setMerchantAddress] = useState("");
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [limitAmount, setLimitAmount] = useState(5000);
 
-  // Aggregated Firestore Stats
   const [todaysRevenue, setTodaysRevenue] = useState(0);
   const [paidCount, setPaidCount] = useState(0);
   const [monthlyVolume, setMonthlyVolume] = useState(0);
   const [recentTx, setRecentTx] = useState<RecentTx[]>([]);
 
-  // Dynamic Chart States
   const [chartData, setChartData] = useState({ labels: [] as string[], values: [] as number[], max: 0 });
 
-  // On-Chain Stellar Balances
   const [phpcBalance, setPhpcBalance] = useState("0.00");
   const [usdcBalance, setUsdcBalance] = useState("0.00");
 
@@ -51,21 +44,31 @@ export default function DashboardOverview() {
       if (user) {
         setIsLoading(true);
         try {
-          // 1. FETCH MERCHANT PROFILE
+          const configSnap = await getDoc(doc(db, "system_config", "global"));
+          let horizonUrl = "https://horizon-testnet.stellar.org";
+          let globalFreeCap = 100000;
+
+          if (configSnap.exists()) {
+            const systemConfig = configSnap.data();
+            globalFreeCap = systemConfig.freeTierMonthlyCap || 100000;
+            if (systemConfig.stellarNetwork === "Mainnet (Public)") {
+              horizonUrl = "https://horizon.stellar.org";
+            }
+          }
+
           const merchantDoc = await getDoc(doc(db, "merchants", user.uid));
           if (merchantDoc.exists()) {
             const data = merchantDoc.data();
             setMerchantName(data.businessName || "Merchant");
             setIsSubscribed(data.isSubscribed === true);
-            setLimitAmount(data.isSubscribed ? Infinity : 5000);
+            setLimitAmount(data.isSubscribed ? Infinity : globalFreeCap);
 
             if (data.stellarPublicKey) {
               setMerchantAddress(data.stellarPublicKey);
-              fetchStellarBalances(data.stellarPublicKey);
+              fetchStellarBalances(data.stellarPublicKey, horizonUrl);
             }
           }
 
-          // 2. SETUP DYNAMIC DATE TRACKING (LAST 7 DAYS)
           const now = new Date();
           const todayStr = now.toDateString();
           const last7DaysStrings = Array.from({ length: 7 }).map((_, i) => {
@@ -80,7 +83,6 @@ export default function DashboardOverview() {
           let paid = 0;
           const allTx: RecentTx[] = [];
 
-          // 3. PARALLEL FETCH ALL TRANSACTIONS
           const invRef = collection(db, `merchants/${user.uid}/invoices`);
           const payRef = collection(db, `merchants/${user.uid}/payments`);
           const cashRef = collection(db, `merchants/${user.uid}/cashouts`);
@@ -91,7 +93,6 @@ export default function DashboardOverview() {
             getDocs(cashRef).catch(() => ({ forEach: () => { } }))
           ]);
 
-          // --- PROCESS INVOICES (RECEIVED) ---
           invSnap.forEach((docSnap: any) => {
             const data = docSnap.data();
             const time = data.timestamp ? new Date(data.timestamp).getTime() : 0;
@@ -128,7 +129,6 @@ export default function DashboardOverview() {
             });
           });
 
-          // --- PROCESS PAYMENTS (SENT) ---
           paySnap.forEach((docSnap: any) => {
             const data = docSnap.data();
             const time = data.timestamp ? new Date(data.timestamp).getTime() : 0;
@@ -138,7 +138,6 @@ export default function DashboardOverview() {
 
             if (isSuccess && data.timestamp) {
               const txDate = new Date(data.timestamp);
-              // Sent payments count towards monthly volume limits
               if (txDate.getMonth() === now.getMonth() && txDate.getFullYear() === now.getFullYear()) {
                 monthVol += fiatAmt;
               }
@@ -156,7 +155,6 @@ export default function DashboardOverview() {
             });
           });
 
-          // --- PROCESS CASHOUTS ---
           cashSnap.forEach((docSnap: any) => {
             const data = docSnap.data();
             const time = data.timestamp ? new Date(data.timestamp).getTime() : 0;
@@ -165,7 +163,7 @@ export default function DashboardOverview() {
               id: docSnap.id,
               type: "Cashout",
               reference: data.cashoutId || docSnap.id,
-              fiatAmount: 0, // Not strictly saved as fiat in Cashouts
+              fiatAmount: 0,
               cryptoAmount: String(data.amountToken || data.amount || "0"),
               token: data.token || "Unknown",
               status: data.status || "PROCESSING",
@@ -173,16 +171,13 @@ export default function DashboardOverview() {
             });
           });
 
-          // Sort by newest first
           allTx.sort((a, b) => b.timestamp - a.timestamp);
 
-          // Set Stats
           setMonthlyVolume(monthVol);
           setTodaysRevenue(todayRev);
           setPaidCount(paid);
-          setRecentTx(allTx.slice(0, 4)); // Only top 4 for dashboard table
+          setRecentTx(allTx.slice(0, 4));
 
-          // Set Chart Data logically
           const maxVal = Math.max(...dailyTotals, 1);
           setChartData({
             labels: last7DaysStrings.map(d => new Date(d).toLocaleDateString('en-US', { weekday: 'short' })),
@@ -200,10 +195,9 @@ export default function DashboardOverview() {
     return () => unsubscribe();
   }, []);
 
-  // FETCH LIVE ON-CHAIN BALANCES
-  const fetchStellarBalances = async (pubKey: string) => {
+  const fetchStellarBalances = async (pubKey: string, endpoint: string) => {
     try {
-      const server = new Horizon.Server(HORIZON_URL);
+      const server = new Horizon.Server(endpoint);
       const account = await server.loadAccount(pubKey);
 
       let phpc = "0.00";
@@ -221,7 +215,6 @@ export default function DashboardOverview() {
     }
   };
 
-  // UI Helpers
   const formatTimeAgo = (ts: number) => {
     if (!ts) return "N/A";
     const seconds = Math.floor((Date.now() - ts) / 1000);
@@ -254,7 +247,27 @@ export default function DashboardOverview() {
   const usagePercentage = isSubscribed ? 100 : Math.min((monthlyVolume / limitAmount) * 100, 100);
 
   return (
-    <div style={{ position: "relative", minHeight: "80vh" }}>
+    <div style={{ position: "relative", minHeight: "80vh", padding: "4px", boxSizing: "border-box" }}>
+      <style>{`
+        .dash-cards-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 24px; }
+        .dash-split-sections { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+        .dash-table-container { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        .dash-table { width: 100%; border-collapse: collapse; min-width: 500px; }
+        .dash-wallet-banner { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08); border-radius: 12px; padding: 16px 22px; display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+        .dash-wallet-balances { flex: 1; border-left: 1px solid rgba(255,255,255,.07); padding-left: 24px; display: flex; gap: 32px; }
+
+        @media (max-width: 1024px) {
+          .dash-cards-grid { grid-template-columns: repeat(2, 1fr); }
+          .dash-split-sections { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 640px) {
+          .dash-cards-grid { grid-template-columns: 1fr; }
+          .dash-wallet-banner { flex-direction: column; align-items: flex-start; gap: 16px; }
+          .dash-wallet-balances { border-left: none; padding-left: 0; gap: 20px; width: 100%; justify-content: space-between; }
+          .dash-wallet-banner button { width: 100%; text-align: center; }
+        }
+      `}</style>
+
       <AnimatePresence>
         {isLoading && <LoadingOverlay isLoading={isLoading} message="Syncing ledger & dashboard data..." />}
       </AnimatePresence>
@@ -266,73 +279,69 @@ export default function DashboardOverview() {
         <p style={{ color: "#9ca3af", fontSize: 13 }}>Here's your store overview for today</p>
       </div>
 
-      {/* STAT CARDS */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 24 }}>
+      <div className="dash-cards-grid">
         <StatCard label="Today's Revenue" value={`₱${todaysRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} sub='Live from ledger' accent="#7c3aed" />
         <StatCard label="Paid Invoices" value={paidCount.toString()} sub='Total lifetime processed' accent="#4ade80" />
         <StatCard label="Monthly Volume" value={`₱${monthlyVolume.toLocaleString(undefined, { maximumFractionDigits: 0 })}`} sub={isSubscribed ? "Unlimited Tier" : "Standard Tier"} accent="#60a5fa" />
         <StatCard label="Fees Saved" value={`₱${(monthlyVolume * 0.025).toLocaleString(undefined, { maximumFractionDigits: 0 })}`} sub="vs 2.5% traditional fee" accent="#7c3aed" />
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
-
-        {/* RECENT TRANSACTIONS TABLE */}
+      <div className="dash-split-sections">
         <div style={{ background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.08)", borderRadius: 12, overflow: "hidden", display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 20px", borderBottom: "1px solid rgba(255,255,255,.06)" }}>
             <span style={{ fontSize: 13, fontWeight: 600, color: "#e5e7eb" }}>Recent Transactions</span>
             <span onClick={() => navigate("/merchant/invoices")} style={{ fontSize: 12, color: "#7c3aed", cursor: "pointer", fontWeight: 500 }}>View all →</span>
           </div>
-          <table style={{ width: "100%", borderCollapse: "collapse", flex: 1 }}>
-            <thead>
-              <tr>{["Type", "Reference", "Amount", "Status", "Time"].map(h => (
-                <th key={h} style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#6b7280", letterSpacing: ".06em", textTransform: "uppercase", padding: "10px 16px", textAlign: "left", borderBottom: "1px solid rgba(255,255,255,.05)" }}>{h}</th>
-              ))}</tr>
-            </thead>
-            <tbody>
-              {recentTx.length > 0 ? (
-                recentTx.map((tx, i) => (
-                  <tr key={i} style={{ borderBottom: "1px solid rgba(255,255,255,.04)" }}>
-                    <td style={{ padding: "12px 16px" }}>
-                      <span style={{
-                        color: tx.type === 'Received' ? '#10b981' : tx.type === 'Sent' ? '#ef4444' : '#60a5fa',
-                        background: tx.type === 'Received' ? 'rgba(16, 185, 129, 0.1)' : tx.type === 'Sent' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(59, 130, 246, 0.1)',
-                        padding: '4px 6px', borderRadius: 4, fontSize: 10, fontWeight: 'bold'
-                      }}>
-                        {tx.type === 'Received' ? 'IN' : tx.type === 'Sent' ? 'OUT' : 'CASH'}
-                      </span>
-                    </td>
-                    <td style={{ padding: "12px 16px", fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#9ca3af" }}>{tx.reference.substring(0, 12)}</td>
-                    <td style={{ padding: "12px 16px", fontWeight: 600, color: "#fff", fontSize: 12 }}>
-                      {tx.fiatAmount > 0
-                        ? `₱${tx.fiatAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
-                        : `${parseFloat(tx.cryptoAmount).toLocaleString()} ${tx.token}`}
-                    </td>
-                    <td style={{ padding: "12px 16px" }}>{renderStatus(tx.status)}</td>
-                    <td style={{ padding: "12px 16px", fontSize: 11, color: "#6b7280", fontFamily: "'DM Mono',monospace", whiteSpace: "nowrap" }}>{formatTimeAgo(tx.timestamp)}</td>
+          <div className="dash-table-container">
+            <table className="dash-table">
+              <thead>
+                <tr>{["Type", "Reference", "Amount", "Status", "Time"].map(h => (
+                  <th key={h} style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#6b7280", letterSpacing: ".06em", textTransform: "uppercase", padding: "10px 16px", textAlign: "left", borderBottom: "1px solid rgba(255,255,255,.05)" }}>{h}</th>
+                ))}</tr>
+              </thead>
+              <tbody>
+                {recentTx.length > 0 ? (
+                  recentTx.map((tx, i) => (
+                    <tr key={i} style={{ borderBottom: "1px solid rgba(255,255,255,.04)" }}>
+                      <td style={{ padding: "12px 16px" }}>
+                        <span style={{
+                          color: tx.type === 'Received' ? '#10b981' : tx.type === 'Sent' ? '#ef4444' : '#60a5fa',
+                          background: tx.type === 'Received' ? 'rgba(16, 185, 129, 0.1)' : tx.type === 'Sent' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(59, 130, 246, 0.1)',
+                          padding: '4px 6px', borderRadius: 4, fontSize: 10, fontWeight: 'bold'
+                        }}>
+                          {tx.type === 'Received' ? 'IN' : tx.type === 'Sent' ? 'OUT' : 'CASH'}
+                        </span>
+                      </td>
+                      <td style={{ padding: "12px 16px", fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#9ca3af" }}>{tx.reference.substring(0, 12)}</td>
+                      <td style={{ padding: "12px 16px", fontWeight: 600, color: "#fff", fontSize: 12 }}>
+                        {tx.fiatAmount > 0
+                          ? `₱${tx.fiatAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                          : `${parseFloat(tx.cryptoAmount).toLocaleString()} ${tx.token}`}
+                      </td>
+                      <td style={{ padding: "12px 16px" }}>{renderStatus(tx.status)}</td>
+                      <td style={{ padding: "12px 16px", fontSize: 11, color: "#6b7280", fontFamily: "'DM Mono',monospace", whiteSpace: "nowrap" }}>{formatTimeAgo(tx.timestamp)}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={5} style={{ padding: "40px", textAlign: "center", color: "#6b7280", fontSize: 12 }}>No transactions yet. Complete an action to see it here!</td>
                   </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={5} style={{ padding: "40px", textAlign: "center", color: "#6b7280", fontSize: 12 }}>No transactions yet. Complete an action to see it here!</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
 
-        {/* DYNAMIC 7-DAY VOLUME & TIER TRACKER */}
         <div style={{ background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.08)", borderRadius: 12, padding: 20 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: "#e5e7eb", marginBottom: 14 }}>7-Day Revenue Trend</div>
 
-          {/* DYNAMIC BARS CALCULATED FROM FIRESTORE */}
           <div style={{ display: "flex", alignItems: "flex-end", gap: 5, height: 80, marginBottom: 6 }}>
             {chartData.values.map((val, i) => {
-              // Calculate height percentage, default to 2% so empty days still show a tiny sliver
               const heightPct = chartData.max > 0 ? Math.max((val / chartData.max) * 100, 2) : 2;
               return (
                 <div
                   key={i}
-                  title={`₱${val.toLocaleString()}`} // Tooltip on hover
+                  title={`₱${val.toLocaleString()}`}
                   style={{ flex: 1, borderRadius: "3px 3px 0 0", height: `${heightPct}%`, background: i === 6 ? "#7c3aed" : "rgba(124,58,237,.3)", transition: "height 0.5s ease" }}
                 />
               );
@@ -365,15 +374,14 @@ export default function DashboardOverview() {
         </div>
       </div>
 
-      {/* LIVE ON-CHAIN WALLET MODULE */}
-      <div style={{ background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.08)", borderRadius: 12, padding: "16px 22px", display: "flex", alignItems: "center", gap: 24 }}>
+      <div className="dash-wallet-banner">
         <div>
           <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#6b7280", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Connected Stellar Ledger</div>
           <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 12, color: "#9ca3af" }}>
             {merchantAddress ? `${merchantAddress.substring(0, 10)}...${merchantAddress.slice(-6)}` : "Wallet Not Connected"}
           </div>
         </div>
-        <div style={{ flex: 1, borderLeft: "1px solid rgba(255,255,255,.07)", paddingLeft: 24, display: "flex", gap: 32 }}>
+        <div className="dash-wallet-balances">
           <div>
             <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#6b7280", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>PHPC Balance</div>
             <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'Nunito',sans-serif", color: "#a78bfa" }}>
@@ -387,7 +395,7 @@ export default function DashboardOverview() {
             </div>
           </div>
         </div>
-        <button onClick={() => navigate("/merchant/cashout")} style={{ background: "#7c3aed", color: "#fff", border: "none", borderRadius: 8, padding: "10px 20px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "'Nunito',sans-serif" }}>
+        <button onClick={() => navigate("/merchant/cashout")} style={{ background: "#7c3aed", color: "#fff", border: "none", borderRadius: 8, padding: "10px 20px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "'Nunito',sans-serif", flexShrink: 0 }}>
           Cash Out →
         </button>
       </div>

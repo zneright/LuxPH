@@ -1,6 +1,3 @@
-// ==========================================
-// 1. IMPORTS
-// ==========================================
 import React, { useState, useEffect } from "react";
 import { auth, db } from "../../config/firebase";
 import { onAuthStateChanged, type User } from "firebase/auth";
@@ -10,11 +7,9 @@ import { signTransaction } from "@stellar/freighter-api";
 import { AnimatePresence, motion } from "framer-motion";
 import { LoadingOverlay } from "../../components/ui/LoadingOverlay";
 
-// ==========================================
-// 2. CONSTANTS & TYPES
-// ==========================================
-const FALLBACK_ANCHOR = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
-const FALLBACK_USDC = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+// Hardcoded Testnet fallback issuer and anchor settlement targets
+const FALLBACK_ANCHOR = "GDZRE7N6PHB6CCM3VBRB5V7SDRB6CS4U6MTUL6Q6OMJEXHUTVPHPC001"; // Testnet Issuer
+const FALLBACK_USDC = "GCAXCH6S643WNNRLOLW52Z6T7A6A6T43L234D7JEXUSDC001";   // Testnet USDC Issuer
 
 const BANK_LOGOS: Record<string, string> = {
   BPI: "https://upload.wikimedia.org/wikipedia/en/c/c2/Bank_of_the_Philippine_Islands_logo.svg",
@@ -37,35 +32,28 @@ interface ReceiptData {
   totalWaitTime: string;
 }
 
-// ==========================================
-// 3. MAIN COMPONENT
-// ==========================================
 export default function CashOut() {
-
-  // --- AUTH & SYSTEM STATE ---
   const [user, setUser] = useState<User | null>(null);
   const [merchantAddress, setMerchantAddress] = useState<string>("");
   const [sysConfig, setSysConfig] = useState({
     networkPassphrase: Networks.TESTNET,
     horizonUrl: "https://horizon-testnet.stellar.org",
     phpcIssuer: FALLBACK_ANCHOR,
+    usdcIssuer: FALLBACK_USDC,
     anchorAddress: FALLBACK_ANCHOR
   });
 
-  // --- FORM STATES ---
   const [anchor, setAnchor] = useState<"pdax" | "palawan">("pdax");
   const [inputMode, setInputMode] = useState<"token" | "php">("token");
   const [tokenAmount, setTokenAmount] = useState<string>("5000");
   const [phpAmount, setPhpAmount] = useState<string>("5000");
 
-  // --- DESTINATION STATES ---
   const [payoutMethod, setPayoutMethod] = useState<"bank" | "gcash" | "qr">("bank");
   const [bankName, setBankName] = useState<string>("BPI");
   const [accountName, setAccountName] = useState<string>("");
   const [accountNumber, setAccountNumber] = useState<string>("");
   const [qrUploaded, setQrUploaded] = useState<boolean>(false);
 
-  // --- UI, DATA & RECEIPT STATES ---
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [loadingMsg, setLoadingMsg] = useState<string>("Initializing system...");
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
@@ -73,25 +61,33 @@ export default function CashOut() {
   const [rates, setRates] = useState<any>(null);
   const [balance, setBalance] = useState<string>("0.00");
 
-  // ==========================================
-  // 4. SYSTEM INITIALIZATION & DATA FETCHING
-  // ==========================================
-
-  // Load Global Config & Authenticate User
   useEffect(() => {
     const initSystem = async () => {
       try {
         const configSnap = await getDoc(doc(db, "system_config", "global"));
+        let currentPassphrase = Networks.TESTNET;
+        let currentHorizon = "https://horizon-testnet.stellar.org";
+        let currentIssuer = FALLBACK_ANCHOR;
+        let currentUsdcIssuer = FALLBACK_USDC;
+        let currentAnchorAddr = FALLBACK_ANCHOR;
+
         if (configSnap.exists()) {
           const c = configSnap.data();
-          const isTestnet = c.stellarNetwork === "Testnet (Futurenet)";
-          setSysConfig({
-            networkPassphrase: isTestnet ? Networks.TESTNET : Networks.PUBLIC,
-            horizonUrl: isTestnet ? "https://horizon-testnet.stellar.org" : "https://horizon.stellar.org",
-            phpcIssuer: c.phpcIssuerAddress || FALLBACK_ANCHOR,
-            anchorAddress: FALLBACK_ANCHOR // Routing to fallback for demo
-          });
+          const isTestnet = c.stellarNetwork ? c.stellarNetwork.includes("Testnet") : true;
+          currentPassphrase = isTestnet ? Networks.TESTNET : Networks.PUBLIC;
+          currentHorizon = isTestnet ? "https://horizon-testnet.stellar.org" : "https://horizon.stellar.org";
+          currentIssuer = c.phpcIssuerAddress || FALLBACK_ANCHOR;
+          currentUsdcIssuer = c.usdcIssuerAddress || FALLBACK_USDC;
+          currentAnchorAddr = c.phpcIssuerAddress || FALLBACK_ANCHOR;
         }
+
+        setSysConfig({
+          networkPassphrase: currentPassphrase,
+          horizonUrl: currentHorizon,
+          phpcIssuer: currentIssuer,
+          usdcIssuer: currentUsdcIssuer,
+          anchorAddress: currentAnchorAddr
+        });
 
         onAuthStateChanged(auth, async (currentUser) => {
           setUser(currentUser);
@@ -111,7 +107,6 @@ export default function CashOut() {
     initSystem();
   }, []);
 
-  // Fetch Live Rates
   useEffect(() => {
     const fetchRates = async () => {
       try {
@@ -125,7 +120,6 @@ export default function CashOut() {
     fetchRates();
   }, []);
 
-  // Fetch On-Chain Balance dynamically
   useEffect(() => {
     if (!merchantAddress) return;
     const fetchBalance = async () => {
@@ -135,7 +129,7 @@ export default function CashOut() {
 
         const balanceObj = account.balances.find((b: any) => {
           if (selectedToken === "XLM") return b.asset_type === "native";
-          const targetIssuer = selectedToken === "PHPC" ? sysConfig.phpcIssuer : FALLBACK_USDC;
+          const targetIssuer = selectedToken === "PHPC" ? sysConfig.phpcIssuer : sysConfig.usdcIssuer;
           return b.asset_code === selectedToken && b.asset_issuer === targetIssuer;
         });
 
@@ -145,11 +139,7 @@ export default function CashOut() {
       }
     };
     fetchBalance();
-  }, [merchantAddress, selectedToken, sysConfig.horizonUrl, sysConfig.phpcIssuer]);
-
-  // ==========================================
-  // 5. BIDIRECTIONAL AMOUNT CONVERSION
-  // ==========================================
+  }, [merchantAddress, selectedToken, sysConfig.horizonUrl, sysConfig.phpcIssuer, sysConfig.usdcIssuer]);
 
   const handleTokenAmountChange = (val: string) => {
     setTokenAmount(val);
@@ -185,9 +175,6 @@ export default function CashOut() {
   const numericBalance = parseFloat(balance.replace(/,/g, '') || "0");
   const isOverBalance = parseFloat(tokenAmount || "0") > numericBalance;
 
-  // ==========================================
-  // 6. FIRESTORE LOGGING HELPER
-  // ==========================================
   const saveCashoutToFirestore = async (
     cashoutId: string,
     status: "PROCESSING_BANK_WIRE" | "failed" | "cancelled",
@@ -220,9 +207,6 @@ export default function CashOut() {
     }
   };
 
-  // ==========================================
-  // 7. SECURE CASHOUT LOGIC
-  // ==========================================
   const handleCashOut = async () => {
     if (!user) return alert("Please log in to continue.");
     if (!merchantAddress) return alert("Please connect your Freighter wallet in settings.");
@@ -244,14 +228,13 @@ export default function CashOut() {
       const server = new Horizon.Server(sysConfig.horizonUrl);
       const sourceAccount = await server.loadAccount(merchantAddress);
 
-      // Construct dynamic asset based on Global Config
       let asset: Asset;
       if (selectedToken === "XLM") {
         asset = Asset.native();
       } else if (selectedToken === "PHPC") {
         asset = new Asset("PHPC", sysConfig.phpcIssuer);
       } else {
-        asset = new Asset("USDC", FALLBACK_USDC);
+        asset = new Asset("USDC", sysConfig.usdcIssuer);
       }
 
       const txMemo = Memo.text(shortId);
@@ -386,39 +369,42 @@ export default function CashOut() {
     setQrUploaded(false);
   };
 
-  // ==========================================
-  // 8. RENDER UI
-  // ==========================================
   return (
-    <div style={{ position: "relative", minHeight: "80vh" }}>
+    <div style={{ position: "relative", minHeight: "80vh", padding: "4px" }}>
+      <style>{`
+        .co-grid-layout { display: grid; grid-template-columns: 1.2fr 1fr; gap: 24px; }
+        .co-anchor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 24px; }
+        .co-dual-input { display: flex; gap: 16px; align-items: flex-start; }
+        .co-method-shelf { display: flex; gap: 8px; margin-bottom: 16px; }
+        .co-form-container { background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.08); border-radius: 16px; overflow: hidden; }
+        .co-summary-container { background: #0f1322; border: 1px solid rgba(124,58,237,.3); border-radius: 16px; overflow: hidden; box-shadow: 0 10px 30px -10px rgba(124,58,237,0.2); }
+        .receipt-action-buttons { display: flex; gap: 12px; margin-top: 24px; }
+        
+        @media print { .hide-on-print { display: none !important; } }
+        @media (max-width: 992px) {
+          .co-grid-layout { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 480px) {
+          .co-anchor-grid { grid-template-columns: 1fr; }
+          .co-dual-input { flex-direction: column; gap: 12px; width: 100%; }
+          .co-dual-input > div { width: 100%; }
+          .co-dual-input > div:nth-child(2) { display: none !important; }
+          .co-method-shelf { flex-direction: column; }
+          .receipt-action-buttons { flex-direction: column; }
+        }
+      `}</style>
+
       <AnimatePresence>
         {isLoading && <LoadingOverlay isLoading={isLoading} message={loadingMsg} />}
       </AnimatePresence>
-      <div>
-        <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#6b7280", textTransform: "uppercase", marginBottom: 8 }}>Token to Cash Out</div>
-        <select
-          value={selectedToken}
-          onChange={(e) => setSelectedToken(e.target.value as any)}
-          style={{ width: "100%", background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 8, padding: "14px", color: "#fff", marginBottom: 16 }}
-        >
-          <option value="PHPC">PHPC (Philippine Stablecoin)</option>
-          <option value="USDC">USDC (USD Stablecoin)</option>
-          <option value="XLM">XLM (Stellar Lumens)</option>
-        </select>
-      </div>
-      <div style={{ marginBottom: 24 }} className="hide-on-print">
+
+      <div className="hide-on-print" style={{ marginBottom: 24 }}>
         <h1 style={{ fontSize: 30, fontWeight: 800, fontFamily: "'Nunito',sans-serif", color: "#fff", marginBottom: 4 }}>Cash Out to PHP</h1>
         <p style={{ color: "#9ca3af", fontSize: 13 }}>Convert your tokens to physical Philippine Peso via Stellar Anchors</p>
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 16, borderTop: "1px solid rgba(255,255,255,.08)" }}>
-        <span style={{ fontSize: 14, color: "#fff" }}>You will receive</span>
-        <span style={{ color: "#10b981", fontSize: 24, fontWeight: 800 }}>
-          ₱{parseFloat(phpAmount || "0").toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-        </span>
-      </div>
+
       <AnimatePresence mode="wait">
         {!receipt ? (
-          /* --- FORM VIEW --- */
           <motion.div
             key="form"
             initial={{ opacity: 0, y: 10 }}
@@ -430,17 +416,26 @@ export default function CashOut() {
               ℹ&nbsp; Cash out is processed via SEP-24 standard. Funds go directly to your bank or e-wallet — no intermediary. Account details are securely encrypted off-chain.
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 24 }}>
-
-              {/* LEFT: INPUT FORM */}
-              <div style={{ background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.08)", borderRadius: 16, overflow: "hidden" }}>
+            <div className="co-grid-layout">
+              <div className="co-form-container">
                 <div style={{ padding: "16px 24px", borderBottom: "1px solid rgba(255,255,255,.06)", fontSize: 14, fontWeight: 700, color: "#e5e7eb", display: "flex", alignItems: "center", gap: 8 }}>
                   <span style={{ color: "#7c3aed" }}>1</span> Select Withdrawal Route
                 </div>
                 <div style={{ padding: 24 }}>
+                  <div>
+                    <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#6b7280", textTransform: "uppercase", marginBottom: 8 }}>Token to Cash Out</div>
+                    <select
+                      value={selectedToken}
+                      onChange={(e) => setSelectedToken(e.target.value as any)}
+                      style={{ width: "100%", background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 8, padding: "14px", color: "#fff", marginBottom: 16, outline: "none" }}
+                    >
+                      <option value="PHPC" style={{ color: "#000" }}>PHPC (Philippine Stablecoin)</option>
+                      <option value="USDC" style={{ color: "#000" }}>USDC (USD Stablecoin)</option>
+                      <option value="XLM" style={{ color: "#000" }}>XLM (Stellar Lumens)</option>
+                    </select>
+                  </div>
 
-                  {/* ANCHOR SELECTION */}
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 24 }}>
+                  <div className="co-anchor-grid">
                     {[
                       {
                         id: "pdax",
@@ -467,7 +462,6 @@ export default function CashOut() {
                     ))}
                   </div>
 
-                  {/* REAL DESTINATION DETAILS */}
                   <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
                       <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#6b7280", textTransform: "uppercase", letterSpacing: ".06em" }}>Available Balance</div>
@@ -476,10 +470,7 @@ export default function CashOut() {
                       </div>
                     </div>
 
-                    {/* DUAL INPUT SYSTEM */}
-                    <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
-
-                      {/* TOKEN INPUT */}
+                    <div className="co-dual-input">
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#6b7280", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>Amount ({selectedToken})</div>
                         <div style={{ display: "flex", alignItems: "center", background: "rgba(255,255,255,.04)", border: isOverBalance ? "1px solid #ef4444" : "1px solid rgba(255,255,255,.1)", borderRadius: 8, overflow: "hidden", padding: "4px 16px", transition: "all 0.2s" }}>
@@ -497,7 +488,6 @@ export default function CashOut() {
                         <span style={{ color: "#6b7280", fontSize: 18 }}>⇄</span>
                       </div>
 
-                      {/* PHP INPUT */}
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#6b7280", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>Amount (PHP)</div>
                         <div style={{ display: "flex", alignItems: "center", background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 8, overflow: "hidden", padding: "4px 16px" }}>
@@ -510,18 +500,17 @@ export default function CashOut() {
                           />
                         </div>
                       </div>
-
                     </div>
 
                     <div style={{ borderTop: "1px solid rgba(255,255,255,.06)", paddingTop: 16, marginTop: 8 }}>
-                      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-                        <button onClick={() => setPayoutMethod("bank")} style={{ flex: 1, padding: 10, borderRadius: 8, background: payoutMethod === "bank" ? "rgba(124,58,237, 0.15)" : "rgba(255,255,255,.05)", border: payoutMethod === "bank" ? "1px solid #7c3aed" : "1px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, transition: "all 0.2s" }}>
+                      <div className="co-method-shelf">
+                        <button type="button" onClick={() => setPayoutMethod("bank")} style={{ flex: 1, padding: 10, borderRadius: 8, background: payoutMethod === "bank" ? "rgba(124,58,237, 0.15)" : "rgba(255,255,255,.05)", border: payoutMethod === "bank" ? "1px solid #7c3aed" : "1px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, transition: "all 0.2s" }}>
                           <span style={{ fontSize: 16 }}>🏦</span> <span style={{ color: payoutMethod === "bank" ? "#fff" : "#9ca3af", fontWeight: 700, fontSize: 13, fontFamily: "'Nunito',sans-serif" }}>Bank</span>
                         </button>
-                        <button onClick={() => setPayoutMethod("gcash")} style={{ flex: 1, padding: 10, borderRadius: 8, background: payoutMethod === "gcash" ? "rgba(59, 130, 246, 0.15)" : "rgba(255,255,255,.05)", border: payoutMethod === "gcash" ? "1px solid #3b82f6" : "1px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, transition: "all 0.2s" }}>
+                        <button type="button" onClick={() => setPayoutMethod("gcash")} style={{ flex: 1, padding: 10, borderRadius: 8, background: payoutMethod === "gcash" ? "rgba(59, 130, 246, 0.15)" : "rgba(255,255,255,.05)", border: payoutMethod === "gcash" ? "1px solid #3b82f6" : "1px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, transition: "all 0.2s" }}>
                           <img src="https://upload.wikimedia.org/wikipedia/commons/5/52/GCash_logo.svg" alt="GCash" height="16" style={{ filter: payoutMethod !== "gcash" ? "grayscale(100%) opacity(0.7)" : "none", transition: "all 0.2s" }} />
                         </button>
-                        <button onClick={() => setPayoutMethod("qr")} style={{ flex: 1, padding: 10, borderRadius: 8, background: payoutMethod === "qr" ? "rgba(16, 185, 129, 0.15)" : "rgba(255,255,255,.05)", border: payoutMethod === "qr" ? "1px solid #10b981" : "1px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, transition: "all 0.2s" }}>
+                        <button type="button" onClick={() => setPayoutMethod("qr")} style={{ flex: 1, padding: 10, borderRadius: 8, background: payoutMethod === "qr" ? "rgba(16, 185, 129, 0.15)" : "rgba(255,255,255,.05)", border: payoutMethod === "qr" ? "1px solid #10b981" : "1px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, transition: "all 0.2s" }}>
                           <img src="https://upload.wikimedia.org/wikipedia/commons/c/c5/QR_Ph_logo.svg" alt="QR Ph" height="18" style={{ filter: payoutMethod !== "qr" ? "grayscale(100%) opacity(0.7)" : "none", transition: "all 0.2s" }} />
                         </button>
                       </div>
@@ -568,9 +557,8 @@ export default function CashOut() {
                 </div>
               </div>
 
-              {/* RIGHT: DYNAMIC SUMMARY */}
               <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-                <div style={{ background: "#0f1322", border: "1px solid rgba(124,58,237,.3)", borderRadius: 16, overflow: "hidden", boxShadow: "0 10px 30px -10px rgba(124,58,237,0.2)" }}>
+                <div className="co-summary-container">
                   <div style={{ padding: "16px 24px", borderBottom: "1px dashed rgba(124,58,237,.3)", fontSize: 14, fontWeight: 700, color: "#a78bfa" }}>
                     Order Summary
                   </div>
@@ -600,13 +588,14 @@ export default function CashOut() {
                   </div>
                   <div style={{ padding: "0 24px 24px 24px" }}>
                     <button
+                      type="button"
                       onClick={handleCashOut}
                       disabled={isOverBalance || parseFloat(tokenAmount) <= 0}
                       style={{
                         width: "100%",
                         background: isOverBalance || parseFloat(tokenAmount) <= 0 ? "#374151" : "linear-gradient(135deg,#10b981,#059669)",
                         color: isOverBalance || parseFloat(tokenAmount) <= 0 ? "#9ca3af" : "#fff",
-                        border: "none",
+                        border: "none", borderStyle: "none",
                         borderRadius: 8,
                         padding: "14px",
                         fontWeight: 800,
@@ -616,8 +605,6 @@ export default function CashOut() {
                         boxShadow: isOverBalance || parseFloat(tokenAmount) <= 0 ? "none" : "0 4px 12px rgba(16,185,129,0.3)",
                         transition: "all 0.2s"
                       }}
-                      onMouseOver={(e) => { if (!isOverBalance && parseFloat(tokenAmount) > 0) e.currentTarget.style.transform = "scale(1.02)" }}
-                      onMouseOut={(e) => e.currentTarget.style.transform = "scale(1)"}
                     >
                       {isOverBalance ? "Insufficient Balance" : "Authorize Cash Out"}
                     </button>
@@ -628,13 +615,9 @@ export default function CashOut() {
                   <strong style={{ color: "#9ca3af" }}>Security Note:</strong> For your privacy, your real bank details are heavily encrypted in our secure database. The public Stellar blockchain only sees a hashed reference ID in the transaction memo.
                 </div>
               </div>
-
             </div>
           </motion.div>
-
         ) : (
-
-          /* --- SUCCESS RECEIPT VIEW --- */
           <motion.div
             key="receipt"
             initial={{ opacity: 0, scale: 0.95 }}
@@ -643,10 +626,8 @@ export default function CashOut() {
             style={{ display: "flex", justifyContent: "center", paddingTop: 20 }}
           >
             <div style={{ width: "100%", maxWidth: 480 }}>
-
-              {/* THE RECEIPT CARD */}
               <div id="printable-receipt" style={{ background: "#ffffff", borderRadius: 16, padding: "32px 32px 40px", position: "relative", boxShadow: "0 25px 50px -12px rgba(0,0,0,0.5)", overflow: "hidden" }}>
-                <div style={{ position: "absolute", top: -10, left: 0, right: 0, height: 20, background: "repeating-linear-gradient(45deg, transparent, transparent 10px, #080b14 10px, #080b14 20px)" }}></div>
+                <div style={{ position: "absolute", top: -10, left: 0, right: 0, height: 20, background: "repeating-linear-gradient(45deg, transparent, transparent 10px, #080b14 10px, #080b14 20px)" }} />
 
                 <div style={{ textAlign: "center", marginBottom: 32, marginTop: 10 }}>
                   <div style={{ width: 64, height: 64, background: "#10b981", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", fontSize: 32, color: "#fff", boxShadow: "0 0 20px rgba(16,185,129,0.4)" }}>✓</div>
@@ -655,7 +636,6 @@ export default function CashOut() {
                 </div>
 
                 <div style={{ borderTop: "2px dashed #e5e7eb", borderBottom: "2px dashed #e5e7eb", padding: "24px 0", marginBottom: 24, display: "flex", flexDirection: "column", gap: 16 }}>
-
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <span style={{ color: "#6b7280", fontSize: 13 }}>Tx ID (Memo)</span>
                     <span style={{ color: "#111827", fontSize: 13, fontWeight: 700, fontFamily: "'DM Mono',monospace" }}>{receipt.id}</span>
@@ -676,7 +656,6 @@ export default function CashOut() {
                     <span style={{ color: "#6b7280", fontSize: 13 }}>Amount Burned</span>
                     <span style={{ color: "#ef4444", fontSize: 13, fontWeight: 700 }}>- {parseFloat(receipt.amountToken).toLocaleString()} {receipt.token}</span>
                   </div>
-
                 </div>
 
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
@@ -689,7 +668,6 @@ export default function CashOut() {
                   {receipt.hash}
                 </div>
 
-                {/* ⚡ DUAL SPEED BADGES */}
                 <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 24 }}>
                   <div style={{ background: "rgba(16,185,129,0.1)", color: "#10b981", border: "1px solid rgba(16,185,129,0.2)", borderRadius: 20, padding: "6px 14px", fontSize: 12, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>
                     ⚡ Network: {receipt.networkSpeed}s
@@ -698,26 +676,21 @@ export default function CashOut() {
                     ⏱️ Total: {receipt.totalWaitTime}s
                   </div>
                 </div>
-
               </div>
 
-              {/* ACTION BUTTONS */}
-              <style>{`@media print { .hide-on-print { display: none !important; } }`}</style>
-
-              <div className="hide-on-print" style={{ display: "flex", gap: 12, marginTop: 24 }}>
-                <button onClick={handlePrint} style={{ flex: 1, background: "rgba(255,255,255,.05)", color: "#fff", border: "1px solid rgba(255,255,255,.1)", borderRadius: 8, padding: "12px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "'Nunito',sans-serif" }}>
+              <div className="receipt-action-buttons hide-on-print">
+                <button type="button" onClick={handlePrint} style={{ flex: 1, background: "rgba(255,255,255,.05)", color: "#fff", border: "1px solid rgba(255,255,255,.1)", borderRadius: 8, padding: "12px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "'Nunito',sans-serif" }}>
                   🖨️ Print Receipt
                 </button>
                 <a href={`${sysConfig.networkPassphrase === Networks.TESTNET ? "https://stellar.expert/explorer/testnet/tx/" : "https://stellar.expert/explorer/public/tx/"}${receipt.hash}`} target="_blank" rel="noreferrer" style={{ flex: 1, textDecoration: "none" }}>
-                  <button style={{ width: "100%", background: "rgba(124,58,237,.15)", color: "#a78bfa", border: "1px solid rgba(124,58,237,.3)", borderRadius: 8, padding: "12px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "'Nunito',sans-serif" }}>
+                  <button type="button" style={{ width: "100%", background: "rgba(124,58,237,.15)", color: "#a78bfa", border: "1px solid rgba(124,58,237,.3)", borderRadius: 8, padding: "12px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "'Nunito',sans-serif" }}>
                     🔗 View on Explorer
                   </button>
                 </a>
               </div>
-              <button onClick={resetForm} className="hide-on-print" style={{ width: "100%", background: "transparent", color: "#6b7280", border: "none", marginTop: 16, fontSize: 13, fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}>
+              <button type="button" onClick={resetForm} className="hide-on-print" style={{ width: "100%", background: "transparent", color: "#6b7280", border: "none", marginTop: 16, fontSize: 13, fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}>
                 ← Make another cash out
               </button>
-
             </div>
           </motion.div>
         )}

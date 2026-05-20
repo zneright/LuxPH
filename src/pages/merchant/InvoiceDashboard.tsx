@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { signTransaction } from '@stellar/freighter-api';
-import { Horizon, TransactionBuilder, Networks, Operation } from '@stellar/stellar-sdk';
-import { doc, updateDoc, increment } from 'firebase/firestore';
+import { TransactionBuilder, Networks, Operation, Keypair, Account, Transaction } from '@stellar/stellar-sdk';
+import { doc, getDoc, updateDoc, setDoc, increment } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 
 interface InvoiceDashboardProps {
@@ -9,14 +9,47 @@ interface InvoiceDashboardProps {
     stellarAddress: string;
 }
 
+const FALLBACK_HORIZON_URL = "https://horizon-testnet.stellar.org";
+
 export default function InvoiceDashboard({ userUid, stellarAddress }: InvoiceDashboardProps) {
     const [isProcessing, setIsProcessing] = useState(false);
     const [txHash, setTxHash] = useState("");
-    const [onChainInvoice, setOnChainInvoice] = useState<string | null>(null);
-    const [isFetchingChainData, setIsFetchingChainData] = useState(false);
+    const [invoiceAccount, setInvoiceAccount] = useState<string | null>(null);
 
-    // 1. Write to Blockchain (Generate Invoice)
-    const generateBlockchainInvoice = async () => {
+    const [networkConfig, setNetworkConfig] = useState({
+        horizonUrl: FALLBACK_HORIZON_URL,
+        passphrase: Networks.TESTNET,
+        explorerUrl: "https://stellar.expert/explorer/testnet/tx/"
+    });
+
+    useEffect(() => {
+        const fetchNetworkConfig = async () => {
+            try {
+                const configSnap = await getDoc(doc(db, "system_config", "global"));
+                if (configSnap.exists()) {
+                    const data = configSnap.data();
+                    if (data.stellarNetwork === "Mainnet (Public)") {
+                        setNetworkConfig({
+                            horizonUrl: data.horizonUrl || "https://horizon.stellar.org",
+                            passphrase: Networks.PUBLIC,
+                            explorerUrl: "https://stellar.expert/explorer/public/tx/"
+                        });
+                    } else {
+                        setNetworkConfig({
+                            horizonUrl: data.horizonUrl || FALLBACK_HORIZON_URL,
+                            passphrase: Networks.TESTNET,
+                            explorerUrl: "https://stellar.expert/explorer/testnet/tx/"
+                        });
+                    }
+                }
+            } catch (e) {
+                console.error("Failed to sync global platform configs:", e);
+            }
+        };
+        fetchNetworkConfig();
+    }, []);
+
+    const generateInvoiceEscrow = async () => {
         if (!stellarAddress) {
             alert("Please connect your Freighter wallet in Settings first!");
             return;
@@ -24,159 +57,179 @@ export default function InvoiceDashboard({ userUid, stellarAddress }: InvoiceDas
 
         setIsProcessing(true);
         try {
-            const server = new Horizon.Server("https://horizon-testnet.stellar.org");
-            const account = await server.loadAccount(stellarAddress);
+            // 1. Fetch live transaction ledger state sequence details from Horizon
+            const response = await fetch(`${networkConfig.horizonUrl}/accounts/${stellarAddress}`);
+            if (!response.ok) {
+                throw new Error("Merchant account not funded or found on the Stellar network.");
+            }
+            const accountData = await response.json();
 
-            // Generate a simple mock Invoice ID
-            const invoiceId = `INV-${Date.now().toString().slice(-6)}`;
+            const sourceAccount = new Account(stellarAddress, accountData.sequence);
 
-            const transaction = new TransactionBuilder(account, {
-                fee: "100",
-                networkPassphrase: Networks.TESTNET,
+            alert("Step 1 of 2: Generating unique escrow tracking targets...");
+
+            const dynamicInvoiceTarget = Keypair.random();
+            const escrowPublicKey = dynamicInvoiceTarget.publicKey();
+
+            alert("Step 2 of 2: Packaging blueprint rules for Freighter validation...");
+
+            const horizonTx = new TransactionBuilder(sourceAccount, {
+                fee: "10000",
+                networkPassphrase: networkConfig.passphrase,
             })
-                .addOperation(Operation.manageData({
-                    name: "Latest_Invoice",
-                    value: invoiceId,
+                .addOperation(Operation.createAccount({
+                    destination: escrowPublicKey,
+                    startingBalance: "2.5"
                 }))
-                .setTimeout(30)
+                .addOperation(Operation.setOptions({
+                    source: escrowPublicKey,
+                    signer: {
+                        ed25519PublicKey: stellarAddress,
+                        weight: 1
+                    },
+                    masterWeight: 0,
+                    lowThreshold: 1,
+                    medThreshold: 1,
+                    highThreshold: 1
+                }))
+                .setTimeout(180)
                 .build();
 
-            // Ask Freighter to sign the transaction
-            const signResponse = await signTransaction(transaction.toXDR(), {
-                network: "TESTNET",
-                networkPassphrase: Networks.TESTNET,
+            alert("Please approve the transaction signature request inside your Freighter wallet extension...");
+
+            const signResponse = await signTransaction(horizonTx.toXDR(), {
+                network: networkConfig.passphrase === Networks.PUBLIC ? "PUBLIC" : "TESTNET",
+                networkPassphrase: networkConfig.passphrase,
             });
 
-            if (!signResponse || signResponse.error) {
-                throw new Error(signResponse.error || "Transaction signing was cancelled.");
+            let freighterSignedXdr = "";
+
+            if (typeof signResponse === 'string') {
+                freighterSignedXdr = signResponse;
+            } else if (signResponse && typeof signResponse === 'object') {
+                if ((signResponse as any).error) {
+                    throw new Error(`Freighter Error: ${(signResponse as any).error}`);
+                }
+                freighterSignedXdr = (signResponse as any).signedTxXdr || (signResponse as any).signedTransaction || "";
             }
 
-            // ==========================================
-            // THE BULLETPROOF STRING EXTRACTION FIX
-            // ==========================================
-            let signedXdrString = "";
-            if (typeof signResponse === "string") {
-                signedXdrString = signResponse;
-            } else if (signResponse.signedTxXdr) {
-                signedXdrString = signResponse.signedTxXdr;
-            } else {
-                signedXdrString = Object.values(signResponse)[0] as string;
+            if (!freighterSignedXdr) {
+                throw new Error("Freighter returned an empty or unrecognized signature response.");
             }
 
-            const txBody = new URLSearchParams();
-            txBody.append("tx", signedXdrString);
+            alert("Appending secure local escrow transaction tokens...");
 
-            const submitResponse = await fetch("https://horizon-testnet.stellar.org/transactions", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/x-www-form-urlencoded",
-                },
-                body: txBody.toString()
+            const finalTx = TransactionBuilder.fromXDR(freighterSignedXdr, networkConfig.passphrase) as Transaction;
+            finalTx.sign(dynamicInvoiceTarget);
+
+            alert("Submitting unified transaction blueprint package onto Horizon infrastructure...");
+
+            const fullySignedXdr = finalTx.toXDR();
+
+            const submitResponse = await fetch(`${networkConfig.horizonUrl}/transactions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({ tx: fullySignedXdr })
             });
 
-            const responseData = await submitResponse.json();
+            const submissionResult = await submitResponse.json();
 
-            if (!submitResponse.ok) {
-                console.error("Network Error Details:", responseData.extras?.result_codes || responseData);
-                throw new Error("Transaction rejected by the network.");
+            if (!submissionResult.successful) {
+                console.error("Horizon Reject Receipt Log:", submissionResult);
+                throw new Error(submissionResult.extras?.result_codes?.transaction || "Horizon node rejected transaction structure properties.");
             }
-            // ==========================================
 
-            // Success! Set the hash in the UI
-            setTxHash(responseData.hash);
+            setTxHash(submissionResult.hash);
+            setInvoiceAccount(escrowPublicKey);
 
-            // Update Firebase
+            // 🚨 FIRESTORE TRACKING SYNCHRONIZATION 🚨
             if (userUid) {
+                // A. Save the individual invoice record into the subcollection
+                const invoiceDocRef = doc(db, `merchants/${userUid}/invoices`, escrowPublicKey);
+                await setDoc(invoiceDocRef, {
+                    invoiceAddress: escrowPublicKey,
+                    creationTxHash: submissionResult.hash,
+                    merchantAddress: stellarAddress,
+                    timestamp: new Date().toISOString(),
+                    status: "pending",
+                    amount: "0",      // Placed as string to handle flexible parsing values later
+                    fiatAmount: "0"
+                });
+
+                // B. Increment the global volume metrics on the merchant parent profile
                 const merchantRef = doc(db, "merchants", userUid);
                 await updateDoc(merchantRef, {
                     invoicesGenerated: increment(1)
                 });
             }
 
-            alert(`Invoice ${invoiceId} successfully logged on Stellar!`);
-            // Automatically fetch the updated data from the chain
-            fetchBlockchainData();
+            alert(`Success! Invoice tracker active and synchronized with Firestore!\nAddress: ${escrowPublicKey}`);
 
-        } catch (error) {
-            console.error("Blockchain Error:", error);
-            alert("Failed to execute transaction. Check console for details.");
+        } catch (error: any) {
+            console.error("Horizon Ledger Submission Matrix Crash:", error);
+            alert(`Deployment Failed: ${error.message || "Review dashboard network configurations."}`);
+        } finally {
+            setIsProcessing(false);
         }
-        setIsProcessing(false);
     };
-
-    // 2. Read from Blockchain (Verify)
-    const fetchBlockchainData = async () => {
-        if (!stellarAddress) return;
-
-        setIsFetchingChainData(true);
-        try {
-            const server = new Horizon.Server("https://horizon-testnet.stellar.org");
-            const account = await server.loadAccount(stellarAddress);
-
-            // Stellar stores 'manageData' values as base64 strings in the data_attr object
-            if (account.data_attr && account.data_attr["Latest_Invoice"]) {
-                const decodedInvoice = atob(account.data_attr["Latest_Invoice"]);
-                setOnChainInvoice(decodedInvoice);
-            } else {
-                setOnChainInvoice("No invoice found on-chain.");
-            }
-        } catch (error) {
-            console.error("Failed to fetch from Horizon", error);
-            setOnChainInvoice("Error fetching data.");
-        }
-        setIsFetchingChainData(false);
-    };
-
-    useEffect(() => {
-        if (stellarAddress) {
-            fetchBlockchainData();
-        }
-    }, [stellarAddress]);
 
     return (
-        <div style={{ marginTop: 24, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+        <div style={{ padding: "4px" }}>
+            <style>{`
+                .id-grid-container { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin-top: 24px; }
+                .id-panel-card { padding: 20px; background: rgba(255,255,255,.04); border-radius: 12px; border: 1px solid rgba(255,255,255,.08); display: flex; flex-direction: column; justify-content: space-between; }
+                .id-status-row { background: rgba(0,0,0,.2); padding: 16px; border-radius: 8px; border: 1px solid rgba(255,255,255,.05); display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+                
+                @media (max-width: 768px) {
+                    .id-grid-container { grid-template-columns: 1fr; gap: 16px; }
+                    .id-panel-card { gap: 16px; }
+                    .id-status-row { flex-direction: column; align-items: flex-start; }
+                    .id-status-row button { width: 100%; text-align: center; margin-top: 8px; }
+                }
+            `}</style>
 
-            {/* Action Panel */}
-            <div style={{ padding: 20, background: "rgba(255,255,255,.04)", borderRadius: 12, border: "1px solid rgba(255,255,255,.08)" }}>
-                <h3 style={{ color: "#fff", fontFamily: "'Nunito',sans-serif", marginTop: 0, marginBottom: 8 }}>Issue Invoice</h3>
-                <p style={{ color: "#9ca3af", fontSize: 13, marginBottom: 20 }}>Create a new invoice and log its ID immutably on the Stellar Testnet.</p>
-
-                <button
-                    onClick={generateBlockchainInvoice}
-                    disabled={isProcessing || !stellarAddress}
-                    style={{ background: "linear-gradient(135deg,#10b981,#059669)", color: "#fff", border: "none", borderRadius: 8, padding: "12px 20px", fontSize: 14, fontWeight: 700, cursor: (isProcessing || !stellarAddress) ? "not-allowed" : "pointer", fontFamily: "'Nunito',sans-serif", width: "100%" }}
-                >
-                    {isProcessing ? "Processing..." : "Generate & Sign"}
-                </button>
-
-                {txHash && (
-                    <div style={{ marginTop: 16, padding: 12, background: "rgba(16,185,129,.1)", borderRadius: 8, border: "1px solid rgba(16,185,129,.2)" }}>
-                        <div style={{ fontSize: 11, color: "#a7f3d0", textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 4 }}>Tx Hash</div>
-                        <a href={`https://stellar.expert/explorer/testnet/tx/${txHash}`} target="_blank" rel="noreferrer" style={{ color: "#34d399", fontSize: 12, wordBreak: "break-all", textDecoration: "none" }}>
-                            {txHash}
-                        </a>
-                    </div>
-                )}
-            </div>
-
-            {/* Verification Panel */}
-            <div style={{ padding: 20, background: "rgba(255,255,255,.04)", borderRadius: 12, border: "1px solid rgba(255,255,255,.08)" }}>
-                <h3 style={{ color: "#fff", fontFamily: "'Nunito',sans-serif", marginTop: 0, marginBottom: 8 }}>On-Chain Verification</h3>
-                <p style={{ color: "#9ca3af", fontSize: 13, marginBottom: 20 }}>Live data read directly from the Horizon network, proving immutability.</p>
-
-                <div style={{ background: "rgba(0,0,0,.2)", padding: 16, borderRadius: 8, border: "1px solid rgba(255,255,255,.05)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div className="id-grid-container">
+                <div className="id-panel-card">
                     <div>
-                        <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#6b7280", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>Latest Logged Invoice</div>
-                        <div style={{ color: "#fff", fontFamily: "'DM Mono',monospace", fontSize: 16 }}>
-                            {isFetchingChainData ? "Reading ledger..." : (onChainInvoice || "None")}
+                        <h3 style={{ color: "#fff", fontFamily: "'Nunito',sans-serif", marginTop: 0, marginBottom: 8 }}>Invoice Target Management</h3>
+                        <p style={{ color: "#9ca3af", fontSize: 13, marginBottom: 20 }}>Initialize an independent transaction tracking address natively onto the Stellar transaction ledger using Horizon engines.</p>
+                    </div>
+
+                    <button
+                        type="button"
+                        onClick={generateInvoiceEscrow}
+                        disabled={isProcessing || !stellarAddress}
+                        style={{ background: "linear-gradient(135deg, #7c3aed, #4f46e5)", color: "#fff", border: "none", borderRadius: 8, padding: "12px 20px", fontSize: 14, fontWeight: 700, cursor: (isProcessing || !stellarAddress) ? "not-allowed" : "pointer", fontFamily: "'Nunito',sans-serif", width: "100%" }}
+                    >
+                        {isProcessing ? "Building Ledger Anchor..." : "Generate Invoice Account"}
+                    </button>
+
+                    {txHash && (
+                        <div style={{ marginTop: 16, padding: 12, background: "rgba(124,58,237,.1)", borderRadius: 8, border: "1px solid rgba(124,58,237,.2)" }}>
+                            <div style={{ fontSize: 11, color: "#c084fc", textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 4 }}>Activation Transaction Hash</div>
+                            <a href={`${networkConfig.explorerUrl}${txHash}`} target="_blank" rel="noreferrer" style={{ color: "#a855f7", fontSize: 12, wordBreak: "break-all", textDecoration: "none" }}>
+                                {txHash}
+                            </a>
+                        </div>
+                    )}
+                </div>
+
+                <div className="id-panel-card">
+                    <div>
+                        <h3 style={{ color: "#fff", fontFamily: "'Nunito',sans-serif", marginTop: 0, marginBottom: 8 }}>Live Address Resolution</h3>
+                        <p style={{ color: "#9ca3af", fontSize: 13, marginBottom: 20 }}>Active payment point reference tracked inside standard Stellar Network explorer systems.</p>
+                    </div>
+
+                    <div className="id-status-row">
+                        <div style={{ width: "100%" }}>
+                            <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#6b7280", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>Target Payment Tracker Public Key</div>
+                            <div style={{ color: "#4ade80", fontFamily: "'DM Mono',monospace", fontSize: 13, wordBreak: "break-all" }}>
+                                {invoiceAccount || "No active invoice generated yet"}
+                            </div>
                         </div>
                     </div>
-                    <button onClick={fetchBlockchainData} style={{ background: "transparent", border: "1px solid rgba(255,255,255,.2)", color: "#fff", borderRadius: 6, padding: "6px 12px", cursor: "pointer", fontSize: 12 }}>
-                        Refresh
-                    </button>
                 </div>
             </div>
-
         </div>
     );
 }

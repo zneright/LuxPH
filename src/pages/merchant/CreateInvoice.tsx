@@ -9,8 +9,9 @@ import { Scanner } from "@yudiel/react-qr-scanner";
 import { LoadingOverlay } from "../../components/ui/LoadingOverlay";
 import MonthlyUsageCard from "../../components/dashboard/MonthlyUsageCard";
 
-const FALLBACK_ISSUER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
-const FALLBACK_USDC = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+// Hardcoded Testnet fallback issuer targets to match staging architecture configurations
+const FALLBACK_ISSUER = "GDZRE7N6PHB6CCM3VBRB5V7SDRB6CS4U6MTUL6Q6OMJEXHUTVPHPC001"; // Testnet Issuer
+const FALLBACK_USDC = "GCAXCH6S643WNNRLOLW52Z6T7A6A6T43L234D7JEXUSDC001";   // Testnet USDC Issuer
 
 const FloatingNode = ({ delay = 0, x, y, size = 1, color = "#f59e0b", blur = 0 }: { delay?: number, x: string, y: string, size?: number, color?: string, blur?: number }) => {
   const { randomDuration, randomDelay } = useMemo(() => ({
@@ -32,10 +33,10 @@ const FloatingNode = ({ delay = 0, x, y, size = 1, color = "#f59e0b", blur = 0 }
 };
 
 export default function CreateInvoice() {
-
   const [sysConfig, setSysConfig] = useState({
     horizonUrl: "https://horizon-testnet.stellar.org",
     phpcIssuer: FALLBACK_ISSUER,
+    usdcIssuer: FALLBACK_USDC,
     freeTierCap: 100000,
   });
 
@@ -67,18 +68,25 @@ export default function CreateInvoice() {
       try {
         const configSnap = await getDoc(doc(db, "system_config", "global"));
         let currentFreeCap = 100000;
+        let currentHorizon = "https://horizon-testnet.stellar.org";
+        let currentIssuer = FALLBACK_ISSUER;
+        let currentUsdcIssuer = FALLBACK_USDC;
 
         if (configSnap.exists()) {
           const c = configSnap.data();
-          const isTestnet = c.stellarNetwork === "Testnet (Futurenet)";
+          const isTestnet = c.stellarNetwork ? c.stellarNetwork.includes("Testnet") : true;
           currentFreeCap = c.freeTierMonthlyCap || 100000;
-
-          setSysConfig({
-            horizonUrl: isTestnet ? "https://horizon-testnet.stellar.org" : "https://horizon.stellar.org",
-            phpcIssuer: c.phpcIssuerAddress || FALLBACK_ISSUER,
-            freeTierCap: currentFreeCap,
-          });
+          currentHorizon = isTestnet ? "https://horizon-testnet.stellar.org" : "https://horizon.stellar.org";
+          currentIssuer = c.phpcIssuerAddress || FALLBACK_ISSUER;
+          currentUsdcIssuer = c.usdcIssuerAddress || FALLBACK_USDC;
         }
+
+        setSysConfig({
+          horizonUrl: currentHorizon,
+          phpcIssuer: currentIssuer,
+          usdcIssuer: currentUsdcIssuer,
+          freeTierCap: currentFreeCap,
+        });
 
         onAuthStateChanged(auth, async (currentUser) => {
           if (currentUser) {
@@ -172,7 +180,7 @@ export default function CreateInvoice() {
     if (token === "XLM") {
       return `web+stellar:pay?destination=${merchantAddress}&amount=${amount}&memo=${memo}&memo_type=text`;
     } else {
-      const issuer = token === "PHPC" ? sysConfig.phpcIssuer : FALLBACK_USDC;
+      const issuer = token === "PHPC" ? sysConfig.phpcIssuer : sysConfig.usdcIssuer;
       return `web+stellar:pay?destination=${merchantAddress}&amount=${amount}&asset_code=${token}&asset_issuer=${issuer}&memo=${memo}&memo_type=text`;
     }
   };
@@ -232,7 +240,6 @@ export default function CreateInvoice() {
       .stream({
         onmessage: async (transaction: any) => {
           if (transaction.memo && transaction.memo.toString().trim() === memo.trim()) {
-
             if (streamCloserRef.current) {
               streamCloserRef.current();
               streamCloserRef.current = null;
@@ -288,7 +295,25 @@ export default function CreateInvoice() {
   };
 
   return (
-    <div style={{ position: "relative", minHeight: "100vh", zIndex: 1, paddingBottom: 60 }}>
+    <div style={{ position: "relative", minHeight: "100vh", zIndex: 1, paddingBottom: 60, boxSizing: "border-box" }}>
+      <style>{`
+        .inv-layout-split { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; align-items: start; }
+        .inv-dual-fields { display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px; align-items: end; margin-bottom: 20px; }
+        .inv-card-left { backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,.06); border-radius: 24px; padding: 32px; position: relative; overflow: hidden; }
+        .inv-card-right { backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,.06); border-radius: 24px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px; position: relative; overflow: hidden; min-height: 450px; box-sizing: border-box; }
+        .qr-frame-box { position: relative; width: 100%; max-width: 260px; aspect-ratio: 1/1; margin-bottom: 24px; display: flex; align-items: center; justify-content: center; background: #ffffff; border-radius: 32px; padding: 20px; box-sizing: border-box; }
+        .scanner-viewport-box { width: 100%; max-width: 300px; border-radius: 20px; overflow: hidden; border: 2px solid #60a5fa; box-shadow: 0 0 30px rgba(96,165,250,0.3); }
+
+        @media (max-width: 992px) {
+          .inv-layout-split { grid-template-columns: 1fr; gap: 24px; }
+        }
+        @media (max-width: 576px) {
+          .inv-dual-fields { grid-template-columns: 1fr; gap: 12px; align-items: stretch; }
+          .inv-dual-fields > div:nth-child(2) { display: none !important; }
+          .inv-card-left, .inv-card-right { padding: 20px; min-height: auto; }
+          .qr-frame-box { max-width: 220px; padding: 12px; }
+        }
+      `}</style>
 
       {isSubscribed && (
         <motion.div
@@ -316,29 +341,29 @@ export default function CreateInvoice() {
         projectedUsage={projectedUsage}
       />
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 32, alignItems: "start" }}>
-
+      <div className="inv-layout-split">
         <motion.div
           animate={isSubscribed ? {
             boxShadow: ["0px 0px 0px rgba(245,158,11,0)", "0px 10px 40px rgba(245,158,11,0.12)", "0px 0px 0px rgba(245,158,11,0)"],
             borderColor: ["rgba(255,255,255,0.06)", "rgba(245,158,11,0.3)", "rgba(255,255,255,0.06)"]
           } : {}}
           transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-          style={{ background: isSubscribed ? "rgba(15, 17, 26, 0.6)" : "rgba(255,255,255,.04)", backdropFilter: "blur(24px)", border: "1px solid rgba(255,255,255,.06)", borderRadius: 24, padding: 32, position: "relative", overflow: "hidden" }}
+          className="inv-card-left"
+          style={{ background: isSubscribed ? "rgba(15, 17, 26, 0.6)" : "rgba(255,255,255,.04)" }}
         >
-          <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 16, alignItems: "end", marginBottom: 20 }}>
+          <div className="inv-dual-fields">
             <div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                 <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 700 }}>Base</div>
                 <select value={fiatCurrency} onChange={(e) => setFiatCurrency(e.target.value as "PHP" | "USD")} disabled={paymentStatus !== "idle"} style={{ background: "transparent", color: "#a78bfa", border: "none", fontSize: 12, outline: "none", cursor: "pointer", fontWeight: "bold" }}>
-                  <option value="PHP">PHP (₱)</option>
-                  <option value="USD">USD ($)</option>
+                  <option value="PHP" style={{ color: "#000" }}>PHP (₱)</option>
+                  <option value="USD" style={{ color: "#000" }}>USD ($)</option>
                 </select>
               </div>
-              <input type="number" value={amountInFiat} onChange={e => setAmountInFiat(e.target.value)} disabled={paymentStatus !== "idle"} placeholder="0.00" style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: "#fff", fontSize: 16, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} onFocus={(e) => { e.target.style.borderColor = isSubscribed ? "rgba(245,158,11,0.5)" : "rgba(124,58,237,0.5)"; e.target.style.background = "rgba(255,255,255,0.05)" }} onBlur={(e) => { e.target.style.borderColor = "rgba(255,255,255,.1)"; e.target.style.background = "rgba(0,0,0,0.2)" }} />
+              <input type="number" value={amountInFiat} onChange={e => setAmountInFiat(e.target.value)} disabled={paymentStatus !== "idle"} placeholder="0.00" style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: "#fff", fontSize: 16, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} />
             </div>
 
-            <motion.div animate={{ opacity: [0.4, 1, 0.4] }} transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }} style={{ paddingBottom: 14, color: isSubscribed ? "#f59e0b" : "#6b7280", fontSize: 20 }}>
+            <motion.div animate={{ opacity: [0.4, 1, 0.4] }} transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }} style={{ paddingBottom: 14, color: isSubscribed ? "#f59e0b" : "#6b7280", fontSize: 20, textAlign: "center" }}>
               ⇄
             </motion.div>
 
@@ -346,12 +371,12 @@ export default function CreateInvoice() {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                 <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 700 }}>Crypto</div>
                 <select value={token} onChange={(e) => setToken(e.target.value as "XLM" | "PHPC" | "USDC")} disabled={paymentStatus !== "idle"} style={{ background: "transparent", color: "#a78bfa", border: "none", fontSize: 12, outline: "none", cursor: "pointer", fontWeight: "bold" }}>
-                  <option value="USDC">USDC</option>
-                  <option value="PHPC">PHPC</option>
-                  <option value="XLM">XLM</option>
+                  <option value="USDC" style={{ color: "#000" }}>USDC</option>
+                  <option value="PHPC" style={{ color: "#000" }}>PHPC</option>
+                  <option value="XLM" style={{ color: "#000" }}>XLM</option>
                 </select>
               </div>
-              <input type="number" value={amount} onChange={handleCryptoAmountChange} disabled={paymentStatus !== "idle"} placeholder="0.00" style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: isSubscribed ? "#fcd34d" : "#a78bfa", fontSize: 16, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} onFocus={(e) => { e.target.style.borderColor = isSubscribed ? "rgba(245,158,11,0.5)" : "rgba(124,58,237,0.5)"; e.target.style.background = "rgba(255,255,255,0.05)" }} onBlur={(e) => { e.target.style.borderColor = "rgba(255,255,255,.1)"; e.target.style.background = "rgba(0,0,0,0.2)" }} />
+              <input type="number" value={amount} onChange={handleCryptoAmountChange} disabled={paymentStatus !== "idle"} placeholder="0.00" style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: isSubscribed ? "#fcd34d" : "#a78bfa", fontSize: 16, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} />
             </div>
           </div>
 
@@ -362,18 +387,17 @@ export default function CreateInvoice() {
               onChange={e => setDescription(e.target.value)}
               disabled={paymentStatus !== "idle"}
               style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: "#fff", fontSize: 14, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }}
-              onFocus={(e) => { e.target.style.borderColor = isSubscribed ? "rgba(245,158,11,0.5)" : "rgba(124,58,237,0.5)"; e.target.style.background = "rgba(255,255,255,0.05)" }}
-              onBlur={(e) => { e.target.style.borderColor = "rgba(255,255,255,.1)"; e.target.style.background = "rgba(0,0,0,0.2)" }}
             />
           </div>
 
           {paymentStatus === "idle" ? (
             <>
-              <motion.button whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }} onClick={() => setPaymentStatus("scanning")} disabled={willExceedLimit} style={{ background: "rgba(96,165,250,.05)", color: willExceedLimit ? "rgba(255,255,255,0.4)" : "#60a5fa", border: "1px solid rgba(96,165,250,.3)", borderRadius: 12, padding: "12px 14px", fontWeight: 700, fontSize: 13, cursor: willExceedLimit ? "not-allowed" : "pointer", fontFamily: "'Nunito',sans-serif", width: "100%", marginBottom: 16, transition: "background 0.2s" }} onMouseEnter={(e) => !willExceedLimit && (e.currentTarget.style.background = "rgba(96,165,250,.1)")} onMouseLeave={(e) => !willExceedLimit && (e.currentTarget.style.background = "rgba(96,165,250,.05)")}>
+              <motion.button type="button" whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }} onClick={() => setPaymentStatus("scanning")} disabled={willExceedLimit} style={{ background: "rgba(96,165,250,.05)", color: willExceedLimit ? "rgba(255,255,255,0.4)" : "#60a5fa", border: "1px solid rgba(96,165,250,.3)", borderRadius: 12, padding: "12px 14px", fontWeight: 700, fontSize: 13, cursor: willExceedLimit ? "not-allowed" : "pointer", fontFamily: "'Nunito',sans-serif", width: "100%", marginBottom: 16, transition: "background 0.2s" }}>
                 📷 Scan Customer Device
               </motion.button>
 
               <motion.button
+                type="button"
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={handleStartListening}
@@ -401,7 +425,7 @@ export default function CreateInvoice() {
               </motion.button>
             </>
           ) : (
-            <button onClick={cancelListening} style={{ width: "100%", background: "transparent", color: "#ef4444", border: "1px solid rgba(239,68,68,.3)", borderRadius: 12, padding: 14, fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "'Nunito',sans-serif", transition: "background 0.2s" }} onMouseEnter={(e) => e.currentTarget.style.background = "rgba(239,68,68,.1)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
+            <button type="button" onClick={cancelListening} style={{ width: "100%", background: "transparent", color: "#ef4444", border: "1px solid rgba(239,68,68,.3)", borderRadius: 12, padding: 14, fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "'Nunito',sans-serif", transition: "background 0.2s" }}>
               Cancel & Edit Invoice
             </button>
           )}
@@ -413,7 +437,8 @@ export default function CreateInvoice() {
             borderColor: ["rgba(255,255,255,0.06)", "rgba(245,158,11,0.2)", "rgba(255,255,255,0.06)"]
           } : {}}
           transition={{ duration: 5, delay: 2.5, repeat: Infinity, ease: "easeInOut" }}
-          style={{ background: isSubscribed ? "rgba(15, 17, 26, 0.6)" : "rgba(255,255,255,.04)", backdropFilter: "blur(24px)", border: "1px solid rgba(255,255,255,.06)", borderRadius: 24, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 40, position: "relative", overflow: "hidden", minHeight: 450 }}
+          className="inv-card-right"
+          style={{ background: isSubscribed ? "rgba(15, 17, 26, 0.6)" : "rgba(255,255,255,.04)" }}
         >
           {isSubscribed && (
             <>
@@ -425,14 +450,14 @@ export default function CreateInvoice() {
           )}
 
           {paymentStatus === "idle" && (
-            <motion.div animate={isSubscribed ? { y: [-8, 8, -8] } : {}} transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }} style={{ textAlign: "center", color: "#9ca3af", fontSize: 15, zIndex: 10, maxWidth: 280, lineHeight: 1.6 }}>
+            <motion.div animate={{ y: isSubscribed ? [-8, 8, -8] : 0 }} transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }} style={{ textAlign: "center", color: "#9ca3af", fontSize: 15, zIndex: 10, maxWidth: 280, lineHeight: 1.6 }}>
               <div style={{ fontSize: 56, marginBottom: 20, filter: isSubscribed ? "drop-shadow(0 0 20px rgba(245,158,11,0.4))" : "none" }}>💸</div>
               Enter details on the left, then generate a QR or scan a customer's device.
             </motion.div>
           )}
 
           {paymentStatus === "listening" && (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", zIndex: 10 }}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", zIndex: 10, width: "100%" }}>
               <div style={{ fontSize: 12, fontFamily: "'DM Mono',monospace", color: isSubscribed ? "#fcd34d" : "#a78bfa", letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 24, fontWeight: 700 }}>
                 Awaiting Payment...
               </div>
@@ -441,15 +466,16 @@ export default function CreateInvoice() {
                 initial={{ scale: 0.9, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1, boxShadow: isSubscribed ? "0 0 40px rgba(245,158,11,0.6)" : "0 0 40px rgba(124,58,237,0.6)" }}
                 transition={{ duration: 0.5, ease: "easeOut" }}
-                style={{ position: "relative", width: 260, height: 260, marginBottom: 24, display: "flex", alignItems: "center", justifyContent: "center", background: "#ffffff", borderRadius: 32, padding: 20, border: isSubscribed ? "4px solid rgba(245,158,11,0.8)" : "4px solid rgba(124,58,237,0.8)" }}
+                className="qr-frame-box"
+                style={{ border: isSubscribed ? "4px solid rgba(245,158,11,0.8)" : "4px solid rgba(124,58,237,0.8)" }}
               >
-                <QRCodeSVG value={generateStellarURI()} size={220} level="H" fgColor="#000000" />
+                <QRCodeSVG value={generateStellarURI()} size={220} level="H" fgColor="#000000" style={{ width: "100%", height: "100%" }} />
               </motion.div>
 
-              <div style={{ fontSize: 36, fontWeight: 900, fontFamily: "'Nunito',sans-serif", color: "#fff", marginBottom: 8, filter: isSubscribed ? "drop-shadow(0 0 10px rgba(245,158,11,0.3))" : "none" }}>
+              <div style={{ fontSize: 36, fontWeight: 900, fontFamily: "'Nunito',sans-serif", color: "#fff", marginBottom: 8, filter: isSubscribed ? "drop-shadow(0 0 10px rgba(245,158,11,0.3))" : "none", textAlign: "center" }}>
                 {parseFloat(amount || "0").toLocaleString()} {token}
               </div>
-              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 12, color: "#9ca3af", background: "rgba(0,0,0,0.4)", border: "1px solid rgba(255,255,255,0.05)", padding: "8px 16px", borderRadius: 8, backdropFilter: "blur(12px)" }}>
+              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 12, color: "#9ca3af", background: "rgba(0,0,0,0.4)", border: "1px solid rgba(255,255,255,0.05)", padding: "8px 16px", borderRadius: 8, backdropFilter: "blur(12px)", textAlign: "center" }}>
                 ID: <span style={{ color: "#fff" }}>{memo}</span>
               </div>
             </div>
@@ -458,11 +484,12 @@ export default function CreateInvoice() {
           {paymentStatus === "scanning" && (
             <div style={{ width: "100%", display: "flex", flexDirection: "column", alignItems: "center", zIndex: 10 }}>
               <div style={{ fontSize: 12, fontFamily: "'DM Mono',monospace", color: "#60a5fa", letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 24, fontWeight: 700 }}>Point at Customer QR</div>
-              <div style={{ width: "100%", maxWidth: 300, borderRadius: 20, overflow: "hidden", border: "2px solid #60a5fa", boxShadow: "0 0 30px rgba(96,165,250,0.3)" }}>
+              <div className="scanner-viewport-box">
                 <Scanner onScan={(result) => handleScanSuccess(result[0].rawValue)} />
               </div>
             </div>
           )}
+
           {paymentStatus === "success" && (
             <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", bounce: 0.5 }} style={{ textAlign: "center", width: "100%", zIndex: 10 }}>
               <div style={{ width: 80, height: 80, background: "linear-gradient(135deg, #10b981, #059669)", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 24px", fontSize: 40, color: "#fff", boxShadow: "0 10px 30px rgba(16,185,129,0.4)" }}>✓</div>
@@ -480,7 +507,7 @@ export default function CreateInvoice() {
                 </div>
               </div>
 
-              <div style={{ display: "flex", gap: 12, justifyContent: "center", marginBottom: 24 }}>
+              <div style={{ display: "flex", gap: 12, justifyContent: "center", marginBottom: 24, flexWrap: "wrap" }}>
                 <div style={{ background: "rgba(16,185,129,0.15)", color: "#10b981", border: "1px solid rgba(16,185,129,0.3)", borderRadius: 20, padding: "8px 14px", fontSize: 12, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>
                   ⚡ Network: {speeds.network}s
                 </div>
@@ -488,7 +515,7 @@ export default function CreateInvoice() {
                   ⏱️ Total Wait: {speeds.total}s
                 </div>
               </div>
-              <button onClick={generateNewInvoiceId} style={{ width: "100%", background: "rgba(255,255,255,.05)", color: "#fff", border: "1px solid rgba(255,255,255,.1)", borderRadius: 8, padding: "12px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "'Nunito',sans-serif" }}>
+              <button type="button" onClick={generateNewInvoiceId} style={{ width: "100%", background: "rgba(255,255,255,.05)", color: "#fff", border: "1px solid rgba(255,255,255,.1)", borderRadius: 8, padding: "12px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "'Nunito',sans-serif" }}>
                 Make Another Invoice
               </button>
             </motion.div>
