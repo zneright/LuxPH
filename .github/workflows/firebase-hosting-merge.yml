@@ -11,12 +11,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Install Dependencies and Build
-        run: npm ci && npm run build
-        env:
-          npm_config_platform: linux # 🚀 Forces npm to download Linux native binaries in the GitHub runner
-          
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies and Linux Bindings
+        run: |
+          npm ci
+          npm install @rolldown/binding-linux-x64-gnu --no-save
+          npm run build
+
       - uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
