@@ -17,7 +17,7 @@ interface TransactionData {
   networkSpeedSeconds?: number;
   totalWaitTimeSeconds?: number;
   payoutMethod?: "bank" | "gcash" | "qr";
-  status?: string; // Added to track success/failure
+  status?: string;
 }
 
 const FloatingWrapper = ({ children, delay = 0, yOffset = 4 }: { children: React.ReactNode, delay?: number, yOffset?: number }) => (
@@ -45,7 +45,6 @@ const AnimatedStatCard = ({ label, value, sub, accent, delay }: { label: string,
   </motion.div>
 );
 
-// Mini Progress Bar for Routing Distribution
 const MiniBar = ({ label, value, max, color }: { label: string, value: number, max: number, color: string }) => {
   const percent = max > 0 ? (value / max) * 100 : 0;
   return (
@@ -66,41 +65,34 @@ export default function Analytics() {
   const [isLoading, setIsLoading] = useState(true);
   const [isPro, setIsPro] = useState<boolean | null>(null);
 
-  // --- CORE SYSTEM METRICS ---
   const [totalIn, setTotalIn] = useState(0);
   const [totalOutPayments, setTotalOutPayments] = useState(0);
   const [totalOutCashouts, setTotalOutCashouts] = useState(0);
   const [feesSaved, setFeesSaved] = useState(0);
 
-  // --- GRANULAR SEGMENT COUNT TRACKERS ---
   const [invoiceCount, setInvoiceCount] = useState(0);
   const [paymentCount, setPaymentCount] = useState(0);
   const [cashoutCount, setCashoutCount] = useState(0);
 
-  // --- FAILED / CANCELLED TRACKERS ---
   const [failedInvoices, setFailedInvoices] = useState(0);
   const [failedPayments, setFailedPayments] = useState(0);
   const [failedCashouts, setFailedCashouts] = useState(0);
 
-  // --- GRANULAR TICKET SIZE CALCULATIONS ---
   const [avgInvoice, setAvgInvoice] = useState(0);
   const [avgPayment, setAvgPayment] = useState(0);
   const [avgCashout, setAvgCashout] = useState(0);
   const [maxTicketIn, setMaxTicketIn] = useState(0);
 
-  // --- SPECIFIC SPEED STATE ---
   const [rxSpeeds, setRxSpeeds] = useState({ net: "0.00", wait: "0.00" });
   const [txSpeeds, setTxSpeeds] = useState({ net: "0.00", wait: "0.00" });
-  const [cxSpeeds, setCxSpeeds] = useState({ net: "0.00", wait: "0.00" }); // Added Cashout Speeds
+  const [cxSpeeds, setCxSpeeds] = useState({ net: "0.00", wait: "0.00" });
 
-  // --- LIVE PIE BREAKDOWNS ---
   const [tokenStats, setTokenStats] = useState({ phpc: 0, usdc: 0, xlm: 0, totalTokens: 0 });
   const [cashoutMethods, setCashoutMethods] = useState({ bank: 0, gcash: 0, qr: 0, total: 0 });
 
   const [heatmapBars, setHeatmapBars] = useState<number[]>(new Array(12).fill(0));
   const [liveLedger, setLiveLedger] = useState<any>({ sequence: "Loading...", protocol: "...", baseFee: "..." });
 
-  // LIVE RADAR FROM STELLAR BLOCKS
   useEffect(() => {
     if (!isPro) return;
     const server = new Horizon.Server(HORIZON_URL);

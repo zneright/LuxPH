@@ -7,22 +7,15 @@ import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, setDoc, collection, getDocs } from "firebase/firestore";
 import { AnimatePresence, motion } from "framer-motion";
 
-// Components
 import { LoadingOverlay } from "../../components/ui/LoadingOverlay";
 import MonthlyUsageCard from "../../components/dashboard/MonthlyUsageCard";
 
-const TOKEN_ISSUERS = {
-    PHPC: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
-    USDC: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
-};
+const FALLBACK_ISSUER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+const FALLBACK_USDC = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
 
-const USAGE_LIMIT = 5000;
-const HORIZON_URL = "https://horizon-testnet.stellar.org";
-
-// --- PREMIUM FLOATING NODE ANIMATION FOR PRO USERS ---
 const FloatingNode = ({ delay = 0, x, y, size = 1, color = "#f59e0b", blur = 0 }: { delay?: number, x: string, y: string, size?: number, color?: string, blur?: number }) => {
     const { randomDuration, randomDelay } = useMemo(() => ({
-        randomDuration: 5 + Math.random() * 4,
+        randomDuration: 5 + Math.random() * 5,
         randomDelay: delay + Math.random() * 2
     }), [delay]);
 
@@ -35,13 +28,14 @@ const FloatingNode = ({ delay = 0, x, y, size = 1, color = "#f59e0b", blur = 0 }
                 width: 2 * size,
                 height: 2 * size,
                 background: color,
-                filter: `blur(${blur}px)`
+                filter: `blur(${blur}px)`,
+                boxShadow: `0 0 ${size * 4}px ${size}px ${color}80`
             }}
             animate={{
-                opacity: [0.05, 0.4, 0.05],
-                scale: [1, 1.8, 1],
-                y: ["0%", "-30%", "0%"],
-                x: ["0%", "10%", "0%"]
+                opacity: [0.1, 0.5, 0.1],
+                scale: [1, 1.4, 1],
+                y: ["0%", "-40%", "0%"],
+                x: ["0%", "15%", "0%"]
             }}
             transition={{ duration: randomDuration, delay: randomDelay, repeat: Infinity, ease: "easeInOut" }}
         />
@@ -49,6 +43,13 @@ const FloatingNode = ({ delay = 0, x, y, size = 1, color = "#f59e0b", blur = 0 }
 };
 
 export default function SendPayment() {
+    const [sysConfig, setSysConfig] = useState({
+        networkPassphrase: Networks.TESTNET,
+        horizonUrl: "https://horizon-testnet.stellar.org",
+        phpcIssuer: FALLBACK_ISSUER,
+        freeTierCap: 100000
+    });
+
     const [destination, setDestination] = useState("");
     const [amount, setAmount] = useState("");
     const [description, setDescription] = useState("Paying Supplier");
@@ -58,81 +59,91 @@ export default function SendPayment() {
     const [txHash, setTxHash] = useState("");
     const [merchantAddress, setMerchantAddress] = useState("");
 
-    // --- SPEED STATE ---
     const [speeds, setSpeeds] = useState({ network: "0.00", total: "0.00" });
 
-    // --- FIAT CURRENCY STATE ---
     const [fiatCurrency, setFiatCurrency] = useState<"PHP" | "USD">("PHP");
     const [amountInFiat, setAmountInFiat] = useState("");
     const [realTimeRate, setRealTimeRate] = useState(1);
     const [usdToPhpRate, setUsdToPhpRate] = useState(56);
 
-    // --- USAGE STATE ---
     const [monthlyUsage, setMonthlyUsage] = useState(0);
     const [isSubscribed, setIsSubscribed] = useState(false);
 
-    // --- GLOBAL LOADING OVERLAY STATE ---
     const [isLoading, setIsLoading] = useState(true);
     const [loadingMsg, setLoadingMsg] = useState("Initializing dashboard...");
 
-    // 1. FETCH MERCHANT AND USAGE DATA
     useEffect(() => {
-        const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-            if (currentUser) {
-                setIsLoading(true);
-                setLoadingMsg("Syncing account data...");
-                try {
-                    const uid = currentUser.uid;
-
-                    // Get Merchant Info
-                    const merchantRef = doc(db, "merchants", uid);
-                    const merchantSnap = await getDoc(merchantRef);
-                    const merchantData = merchantSnap.data();
-
-                    if (merchantData?.stellarPublicKey) {
-                        setMerchantAddress(merchantData.stellarPublicKey);
-                    }
-                    setIsSubscribed(merchantData?.isSubscribed === true);
-
-                    // Get Total Monthly Volume
-                    let currentMonthVolume = 0;
-                    const now = new Date();
-
-                    // Fetch Invoices
-                    const invoicesRef = collection(db, `merchants/${uid}/invoices`);
-                    const invSnap = await getDocs(invoicesRef);
-                    invSnap.forEach((doc) => {
-                        const data = doc.data();
-                        if (data.timestamp && data.status !== "failed" && data.status !== "cancelled" && new Date(data.timestamp).getMonth() === now.getMonth()) {
-                            currentMonthVolume += parseFloat(data.fiatAmount || data.amount || 0);
-                        }
+        const initSystem = async () => {
+            try {
+                const configSnap = await getDoc(doc(db, "system_config", "global"));
+                if (configSnap.exists()) {
+                    const c = configSnap.data();
+                    const isTestnet = c.stellarNetwork === "Testnet (Futurenet)";
+                    setSysConfig({
+                        networkPassphrase: isTestnet ? Networks.TESTNET : Networks.PUBLIC,
+                        horizonUrl: isTestnet ? "https://horizon-testnet.stellar.org" : "https://horizon.stellar.org",
+                        phpcIssuer: c.phpcIssuerAddress || FALLBACK_ISSUER,
+                        freeTierCap: c.freeTierMonthlyCap || 100000
                     });
-
-                    // Fetch Outbound Payments
-                    const paymentsRef = collection(db, `merchants/${uid}/payments`);
-                    const paySnap = await getDocs(paymentsRef);
-                    paySnap.forEach((doc) => {
-                        const data = doc.data();
-                        if (data.timestamp && data.status !== "failed" && data.status !== "cancelled" && new Date(data.timestamp).getMonth() === now.getMonth()) {
-                            currentMonthVolume += parseFloat(data.fiatAmount || data.amount || 0);
-                        }
-                    });
-
-                    setMonthlyUsage(currentMonthVolume);
-                } catch (err) {
-                    console.error("Failed to fetch dashboard data:", err);
-                } finally {
-                    setIsLoading(false);
                 }
-            } else {
+
+                onAuthStateChanged(auth, async (currentUser) => {
+                    if (currentUser) {
+                        setIsLoading(true);
+                        setLoadingMsg("Syncing account data...");
+                        try {
+                            const uid = currentUser.uid;
+                            const merchantRef = doc(db, "merchants", uid);
+                            const merchantSnap = await getDoc(merchantRef);
+                            const merchantData = merchantSnap.data();
+
+                            if (merchantData?.stellarPublicKey) {
+                                setMerchantAddress(merchantData.stellarPublicKey);
+                            }
+                            setIsSubscribed(merchantData?.isSubscribed === true);
+                            await fetchUsage(uid);
+                        } catch (err) {
+                            console.error(err);
+                        } finally {
+                            setIsLoading(false);
+                        }
+                    } else {
+                        setIsLoading(false);
+                    }
+                });
+            } catch (err) {
+                console.error(err);
                 setIsLoading(false);
+            }
+        };
+        initSystem();
+    }, []);
+
+    const fetchUsage = async (uid: string) => {
+        let currentMonthVolume = 0;
+        const now = new Date();
+
+        const invoicesRef = collection(db, `merchants/${uid}/invoices`);
+        const invSnap = await getDocs(invoicesRef);
+        invSnap.forEach((docSnap) => {
+            const data = docSnap.data();
+            if (data.timestamp && data.status !== "failed" && data.status !== "cancelled" && new Date(data.timestamp).getMonth() === now.getMonth()) {
+                currentMonthVolume += parseFloat(data.fiatAmount || data.amount || "0");
             }
         });
 
-        return () => unsubscribe();
-    }, [txHash]);
+        const paymentsRef = collection(db, `merchants/${uid}/payments`);
+        const paySnap = await getDocs(paymentsRef);
+        paySnap.forEach((docSnap) => {
+            const data = docSnap.data();
+            if (data.timestamp && data.status !== "failed" && data.status !== "cancelled" && new Date(data.timestamp).getMonth() === now.getMonth()) {
+                currentMonthVolume += parseFloat(data.fiatAmount || data.amount || "0");
+            }
+        });
 
-    // 2. EXCHANGE RATE LOGIC
+        setMonthlyUsage(currentMonthVolume);
+    };
+
     useEffect(() => {
         let isMounted = true;
         const fetchRate = async () => {
@@ -159,7 +170,7 @@ export default function SendPayment() {
                     setAmount((parsedFiat / rate).toFixed(2));
                 }
             } catch (e) {
-                console.error("Rate fetch failed, using default");
+                console.error(e);
             }
         };
         fetchRate();
@@ -178,13 +189,12 @@ export default function SendPayment() {
         }
     };
 
-    // 3. REAL-TIME LIMIT CHECKER
     const inputVolumePHP = fiatCurrency === "PHP"
         ? parseFloat(amountInFiat) || 0
         : (parseFloat(amountInFiat) || 0) * usdToPhpRate;
 
     const projectedUsage = monthlyUsage + inputVolumePHP;
-    const willExceedLimit = !isSubscribed && projectedUsage > USAGE_LIMIT;
+    const willExceedLimit = !isSubscribed && projectedUsage > sysConfig.freeTierCap;
 
     const handleScan = async (text: string) => {
         const address = text.includes("destination=") ? text.match(/destination=([A-Z0-9]+)/)?.[1] || text : text;
@@ -192,16 +202,15 @@ export default function SendPayment() {
         setIsScanning(false);
 
         if (willExceedLimit) {
-            alert(`⚠️ This transaction exceeds your free tier limit (${USAGE_LIMIT.toLocaleString()} PHP). Please subscribe to continue.`);
+            alert(`⚠️ This transaction exceeds your free tier limit (${sysConfig.freeTierCap.toLocaleString()} PHP). Please subscribe to continue.`);
             return;
         }
 
         if (confirm(`Do you want to send ${amount} ${token} to ${address.substring(0, 8)}...?`)) {
-            await executePayment();
+            await executePayment(address);
         }
     };
 
-    // --- FIRESTORE HELPER ---
     const savePaymentToFirestore = async (
         paymentId: string,
         status: "success" | "failed" | "cancelled",
@@ -230,13 +239,14 @@ export default function SendPayment() {
                 totalWaitTimeSeconds: parseFloat(totalSpeed)
             }, { merge: true });
         } catch (err) {
-            console.error("Firestore Save Error:", err);
+            console.error(err);
         }
     };
 
-    const executePayment = async () => {
+    const executePayment = async (scannedDest?: string) => {
+        const finalDest = scannedDest || destination;
         if (!merchantAddress) return alert("Please connect your wallet in Settings.");
-        if (!destination || !amount) return alert("Please provide a destination and an amount.");
+        if (!finalDest || !amount) return alert("Please provide a destination and an amount.");
         if (willExceedLimit) return alert(`⚠️ Usage limit reached. Cannot send payment.`);
 
         const startTime = Date.now();
@@ -250,20 +260,22 @@ export default function SendPayment() {
         setSpeeds({ network: "0.00", total: "0.00" });
 
         try {
-            const server = new Horizon.Server(HORIZON_URL);
+            const server = new Horizon.Server(sysConfig.horizonUrl);
             const sourceAccount = await server.loadAccount(merchantAddress);
 
             let asset = Asset.native();
-            if (token !== "XLM") {
-                asset = new Asset(token, TOKEN_ISSUERS[token]);
+            if (token === "PHPC") {
+                asset = new Asset("PHPC", sysConfig.phpcIssuer);
+            } else if (token === "USDC") {
+                asset = new Asset("USDC", FALLBACK_USDC);
             }
 
             const transaction = new TransactionBuilder(sourceAccount, {
                 fee: "1000",
-                networkPassphrase: Networks.TESTNET,
+                networkPassphrase: sysConfig.networkPassphrase,
             })
                 .addOperation(Operation.payment({
-                    destination: destination,
+                    destination: finalDest,
                     asset: asset,
                     amount: amount.toString(),
                 }))
@@ -272,8 +284,8 @@ export default function SendPayment() {
                 .build();
 
             const signResponse = await signTransaction(transaction.toXDR(), {
-                network: "TESTNET",
-                networkPassphrase: Networks.TESTNET,
+                network: sysConfig.networkPassphrase === Networks.TESTNET ? "TESTNET" : "PUBLIC",
+                networkPassphrase: sysConfig.networkPassphrase,
             });
 
             if (!signResponse || signResponse.error) {
@@ -291,7 +303,7 @@ export default function SendPayment() {
             const txBody = new URLSearchParams();
             txBody.append("tx", signedXdrString);
 
-            const submitResponse = await fetch(`${HORIZON_URL}/transactions`, {
+            const submitResponse = await fetch(`${sysConfig.horizonUrl}/transactions`, {
                 method: "POST",
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },
                 body: txBody.toString()
@@ -301,7 +313,6 @@ export default function SendPayment() {
             const receiveTime = Date.now();
 
             if (!submitResponse.ok) {
-                console.error("Full Network Error:", responseData);
                 let exactError = "Unknown Network Error";
                 if (responseData.extras && responseData.extras.result_codes) {
                     const codes = responseData.extras.result_codes;
@@ -336,6 +347,10 @@ export default function SendPayment() {
 
             setTxHash(hash);
 
+            if (auth.currentUser) {
+                await fetchUsage(auth.currentUser.uid);
+            }
+
         } catch (error: any) {
             console.error(error);
             if (!paymentLogged) {
@@ -349,24 +364,22 @@ export default function SendPayment() {
     };
 
     return (
-        <div style={{ position: "relative", minHeight: "100vh", zIndex: 1 }}>
-
-            {/* --- PREMIUM AMBIENT BACKGROUND GLOW --- */}
+        <div style={{ position: "relative", minHeight: "100vh", zIndex: 1, paddingBottom: 60 }}>
             {isSubscribed && (
                 <motion.div
                     style={{
                         position: "absolute",
-                        top: "10%",
-                        right: "5%",
-                        width: 600,
-                        height: 600,
-                        background: "radial-gradient(circle, rgba(245,158,11,0.04) 0%, transparent 60%)",
+                        top: "5%",
+                        left: "20%",
+                        width: 800,
+                        height: 800,
+                        background: "radial-gradient(circle, rgba(245,158,11,0.06) 0%, transparent 60%)",
                         borderRadius: "50%",
                         zIndex: -1,
                         pointerEvents: "none"
                     }}
-                    animate={{ scale: [1, 1.1, 1], opacity: [0.5, 0.8, 0.5] }}
-                    transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
+                    animate={{ scale: [1, 1.2, 1], opacity: [0.4, 0.7, 0.4] }}
+                    transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
                 />
             )}
 
@@ -374,180 +387,181 @@ export default function SendPayment() {
                 {isLoading && <LoadingOverlay isLoading={isLoading} message={loadingMsg} />}
             </AnimatePresence>
 
-            {/* HEADER (Clean, no extra badges) */}
-            <div style={{ marginBottom: 24 }}>
-                <h1 style={{ fontSize: 30, fontWeight: 800, fontFamily: "'Nunito',sans-serif", color: "#fff", margin: 0 }}>
+            <div style={{ marginBottom: 32 }}>
+                <h1 style={{ fontSize: 36, fontWeight: 900, fontFamily: "'Nunito',sans-serif", color: "#fff", margin: 0, letterSpacing: "-0.02em" }}>
                     Send Payment
                 </h1>
-                <p style={{ color: "#9ca3af", fontSize: 13, marginTop: 4 }}>Pay suppliers or other merchants directly on-chain.</p>
+                <p style={{ color: "#9ca3af", fontSize: 14, marginTop: 6 }}>Process secure, real-time blockchain payments to suppliers.</p>
             </div>
 
-            <MonthlyUsageCard monthlyUsage={monthlyUsage} isSubscribed={isSubscribed} usageLimit={USAGE_LIMIT} projectedUsage={projectedUsage} />
+            <MonthlyUsageCard monthlyUsage={monthlyUsage} isSubscribed={isSubscribed} usageLimit={sysConfig.freeTierCap} projectedUsage={projectedUsage} />
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-
-                {/* --- ACTION PANEL --- */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 32, alignItems: "start" }}>
                 <motion.div
                     animate={isSubscribed ? {
-                        boxShadow: ["0px 0px 0px rgba(245,158,11,0)", "0px 8px 32px rgba(245,158,11,0.08)", "0px 0px 0px rgba(245,158,11,0)"],
-                        borderColor: ["rgba(255,255,255,0.06)", "rgba(245,158,11,0.25)", "rgba(255,255,255,0.06)"]
+                        boxShadow: ["0px 0px 0px rgba(245,158,11,0)", "0px 10px 40px rgba(245,158,11,0.12)", "0px 0px 0px rgba(245,158,11,0)"],
+                        borderColor: ["rgba(255,255,255,0.06)", "rgba(245,158,11,0.3)", "rgba(255,255,255,0.06)"]
                     } : {}}
-                    transition={{ duration: 5, repeat: Infinity, ease: "easeInOut" }}
+                    transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
                     style={{
                         background: isSubscribed ? "rgba(15, 17, 26, 0.6)" : "rgba(255,255,255,.04)",
-                        backdropFilter: isSubscribed ? "blur(20px)" : "none",
+                        backdropFilter: "blur(24px)",
                         border: "1px solid rgba(255,255,255,.06)",
-                        borderRadius: 16,
-                        padding: 28,
-                        position: "relative",
-                        overflow: "hidden"
-                    }}
-                >
-                    <div style={{ marginBottom: 16 }}>
-                        <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#6b7280", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>Supplier Address</div>
-                        <input value={destination} onChange={e => setDestination(e.target.value)} placeholder="G..." style={{ width: "100%", background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 8, padding: "12px 14px", color: "#fff", fontSize: 12, fontFamily: "'DM Mono',monospace", outline: "none", boxSizing: "border-box", transition: "border 0.2s" }} onFocus={(e) => isSubscribed && (e.target.style.borderColor = "rgba(245,158,11,0.4)")} onBlur={(e) => e.target.style.borderColor = "rgba(255,255,255,.1)"} />
-                    </div>
-
-                    <button onClick={() => setIsScanning(!isScanning)} style={{ background: "rgba(96,165,250,.05)", color: "#60a5fa", border: "1px solid rgba(96,165,250,.3)", borderRadius: 8, padding: "10px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "'Nunito',sans-serif", width: "100%", marginBottom: 24, transition: "background 0.2s" }} onMouseEnter={(e) => e.currentTarget.style.background = "rgba(96,165,250,.1)"} onMouseLeave={(e) => e.currentTarget.style.background = "rgba(96,165,250,.05)"}>
-                        {isScanning ? "Cancel Camera" : "📷 Scan Supplier QR Code"}
-                    </button>
-
-                    {/* FIAT INPUT */}
-                    <div style={{ marginBottom: 20 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                            <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#6b7280", textTransform: "uppercase", letterSpacing: ".06em" }}>Base Amount</div>
-                            <select value={fiatCurrency} onChange={(e) => setFiatCurrency(e.target.value as "PHP" | "USD")} style={{ background: "rgba(167, 139, 250, 0.15)", color: "#a78bfa", border: "1px solid rgba(167, 139, 250, 0.3)", borderRadius: 6, padding: "4px 8px", fontSize: 11, outline: "none", cursor: "pointer", fontWeight: "bold" }}>
-                                <option value="PHP">PHP (₱)</option>
-                                <option value="USD">USD ($)</option>
-                            </select>
-                        </div>
-                        <input type="number" value={amountInFiat} onChange={e => setAmountInFiat(e.target.value)} placeholder="0.00" style={{ width: "100%", background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 8, padding: "12px 14px", color: "#fff", fontSize: 15, outline: "none", boxSizing: "border-box", transition: "border 0.2s" }} onFocus={(e) => isSubscribed && (e.target.style.borderColor = "rgba(245,158,11,0.4)")} onBlur={(e) => e.target.style.borderColor = "rgba(255,255,255,.1)"} />
-                    </div>
-
-                    {/* CRYPTO INPUTS */}
-                    <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12, marginBottom: 20 }}>
-                        <div>
-                            <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#6b7280", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>Crypto Eqv.</div>
-                            <input type="number" value={amount} onChange={handleCryptoAmountChange} placeholder="0.00" style={{ width: "100%", background: "rgba(255,255,255,.02)", border: "1px solid rgba(255,255,255,.05)", borderRadius: 8, padding: "12px 14px", color: "#a78bfa", fontSize: 14, outline: "none", boxSizing: "border-box" }} />
-                        </div>
-                        <div>
-                            <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#6b7280", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>Token</div>
-                            <select value={token} onChange={(e) => setToken(e.target.value as "XLM" | "PHPC" | "USDC")} style={{ width: "100%", background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 8, padding: "12px 14px", color: "#fff", fontSize: 13, outline: "none", cursor: "pointer" }}>
-                                <option value="XLM">XLM</option>
-                                <option value="USDC">USDC</option>
-                                <option value="PHPC">PHPC</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <div style={{ marginBottom: 28 }}>
-                        <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#6b7280", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>Description / Memo</div>
-                        <input value={description} onChange={e => setDescription(e.target.value)} style={{ width: "100%", background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 8, padding: "12px 14px", color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box", transition: "border 0.2s" }} onFocus={(e) => isSubscribed && (e.target.style.borderColor = "rgba(245,158,11,0.4)")} onBlur={(e) => e.target.style.borderColor = "rgba(255,255,255,.1)"} />
-                    </div>
-
-                    {/* PREMIUM SEND BUTTON */}
-                    <button
-                        onClick={executePayment}
-                        disabled={isLoading || !destination || !amount || willExceedLimit}
-                        style={{
-                            width: "100%",
-                            background: willExceedLimit ? "rgba(239, 68, 68, 0.15)" : (isSubscribed ? "linear-gradient(135deg, #10b981 0%, #047857 100%)" : "linear-gradient(135deg,#10b981,#059669)"),
-                            color: willExceedLimit ? "#ef4444" : "#fff",
-                            border: willExceedLimit ? "1px solid rgba(239, 68, 68, 0.4)" : (isSubscribed ? "1px solid rgba(16, 185, 129, 0.4)" : "none"),
-                            borderRadius: 10,
-                            padding: "16px 14px",
-                            fontWeight: 800,
-                            fontSize: 15,
-                            cursor: (isLoading || !destination || !amount || willExceedLimit) ? "not-allowed" : "pointer",
-                            fontFamily: "'Nunito',sans-serif",
-                            position: "relative",
-                            overflow: "hidden",
-                            boxShadow: isSubscribed && !willExceedLimit ? "0 8px 20px -6px rgba(16,185,129,0.5)" : "none",
-                        }}
-                    >
-                        {isSubscribed && !willExceedLimit && !(isLoading || !destination || !amount) && (
-                            <motion.div
-                                animate={{ left: ["-100%", "200%"] }}
-                                transition={{ repeat: Infinity, duration: 2.5, ease: "easeInOut", repeatDelay: 2 }}
-                                style={{ position: "absolute", top: 0, bottom: 0, width: "20%", background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent)", transform: "skewX(-20deg)" }}
-                            />
-                        )}
-                        {willExceedLimit ? "Limit Exceeded" : (isLoading ? "Processing..." : "Sign & Send Payment")}
-                    </button>
-                </motion.div>
-
-                {/* --- FEEDBACK PANEL --- */}
-                <motion.div
-                    animate={isSubscribed ? {
-                        boxShadow: ["0px 0px 0px rgba(245,158,11,0)", "0px 8px 32px rgba(245,158,11,0.08)", "0px 0px 0px rgba(245,158,11,0)"],
-                        borderColor: ["rgba(255,255,255,0.06)", "rgba(245,158,11,0.25)", "rgba(255,255,255,0.06)"]
-                    } : {}}
-                    transition={{ duration: 5, delay: 2.5, repeat: Infinity, ease: "easeInOut" }} // Delayed to pulse out-of-sync
-                    style={{
-                        background: isSubscribed ? "rgba(15, 17, 26, 0.6)" : "rgba(255,255,255,.04)",
-                        backdropFilter: isSubscribed ? "blur(20px)" : "none",
-                        border: "1px solid rgba(255,255,255,.06)",
-                        borderRadius: 16,
-                        display: "flex",
-                        flexDirection: "column",
-                        alignItems: "center",
-                        justifyContent: "center",
+                        borderRadius: 24,
                         padding: 32,
                         position: "relative",
                         overflow: "hidden"
                     }}
                 >
-                    {/* PRO BACKGROUND NODES */}
+                    <div style={{ marginBottom: 20 }}>
+                        <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8, fontWeight: 700 }}>Recipient Wallet Address</div>
+                        <input value={destination} onChange={e => setDestination(e.target.value)} placeholder="G..." style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: "#fff", fontSize: 13, fontFamily: "'DM Mono',monospace", outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} onFocus={(e) => { e.target.style.borderColor = isSubscribed ? "rgba(245,158,11,0.5)" : "rgba(124,58,237,0.5)"; e.target.style.background = "rgba(255,255,255,0.05)" }} onBlur={(e) => { e.target.style.borderColor = "rgba(255,255,255,.1)"; e.target.style.background = "rgba(0,0,0,0.2)" }} />
+                    </div>
+
+                    <motion.button whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }} onClick={() => setIsScanning(!isScanning)} style={{ background: "rgba(96,165,250,.05)", color: "#60a5fa", border: "1px solid rgba(96,165,250,.3)", borderRadius: 12, padding: "12px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "'Nunito',sans-serif", width: "100%", marginBottom: 28, transition: "background 0.2s" }} onMouseEnter={(e) => e.currentTarget.style.background = "rgba(96,165,250,.1)"} onMouseLeave={(e) => e.currentTarget.style.background = "rgba(96,165,250,.05)"}>
+                        {isScanning ? "Cancel Camera Scan" : "📷 Scan Supplier QR Code"}
+                    </motion.button>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 16, alignItems: "end", marginBottom: 20 }}>
+                        <div>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                                <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 700 }}>Base</div>
+                                <select value={fiatCurrency} onChange={(e) => setFiatCurrency(e.target.value as "PHP" | "USD")} style={{ background: "transparent", color: "#a78bfa", border: "none", fontSize: 12, outline: "none", cursor: "pointer", fontWeight: "bold" }}>
+                                    <option value="PHP">PHP (₱)</option>
+                                    <option value="USD">USD ($)</option>
+                                </select>
+                            </div>
+                            <input type="number" value={amountInFiat} onChange={e => setAmountInFiat(e.target.value)} placeholder="0.00" style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: "#fff", fontSize: 16, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} onFocus={(e) => { e.target.style.borderColor = isSubscribed ? "rgba(245,158,11,0.5)" : "rgba(124,58,237,0.5)"; e.target.style.background = "rgba(255,255,255,0.05)" }} onBlur={(e) => { e.target.style.borderColor = "rgba(255,255,255,.1)"; e.target.style.background = "rgba(0,0,0,0.2)" }} />
+                        </div>
+
+                        <motion.div animate={{ opacity: [0.4, 1, 0.4] }} transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }} style={{ paddingBottom: 14, color: isSubscribed ? "#f59e0b" : "#6b7280", fontSize: 20 }}>
+                            ⇄
+                        </motion.div>
+
+                        <div>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                                <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 700 }}>Crypto</div>
+                                <select value={token} onChange={(e) => setToken(e.target.value as "XLM" | "PHPC" | "USDC")} style={{ background: "transparent", color: "#a78bfa", border: "none", fontSize: 12, outline: "none", cursor: "pointer", fontWeight: "bold" }}>
+                                    <option value="USDC">USDC</option>
+                                    <option value="PHPC">PHPC</option>
+                                    <option value="XLM">XLM</option>
+                                </select>
+                            </div>
+                            <input type="number" value={amount} onChange={handleCryptoAmountChange} placeholder="0.00" style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: isSubscribed ? "#fcd34d" : "#a78bfa", fontSize: 16, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} onFocus={(e) => { e.target.style.borderColor = isSubscribed ? "rgba(245,158,11,0.5)" : "rgba(124,58,237,0.5)"; e.target.style.background = "rgba(255,255,255,0.05)" }} onBlur={(e) => { e.target.style.borderColor = "rgba(255,255,255,.1)"; e.target.style.background = "rgba(0,0,0,0.2)" }} />
+                        </div>
+                    </div>
+
+                    <div style={{ marginBottom: 32 }}>
+                        <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8, fontWeight: 700 }}>Memo / Reference Note</div>
+                        <input value={description} onChange={e => setDescription(e.target.value)} style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} onFocus={(e) => { e.target.style.borderColor = isSubscribed ? "rgba(245,158,11,0.5)" : "rgba(124,58,237,0.5)"; e.target.style.background = "rgba(255,255,255,0.05)" }} onBlur={(e) => { e.target.style.borderColor = "rgba(255,255,255,.1)"; e.target.style.background = "rgba(0,0,0,0.2)" }} />
+                    </div>
+
+                    <motion.button
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                        onClick={() => executePayment()}
+                        disabled={isLoading || !destination || !amount || willExceedLimit}
+                        style={{
+                            width: "100%",
+                            background: willExceedLimit ? "rgba(239, 68, 68, 0.15)" : (isSubscribed ? "linear-gradient(90deg, #f59e0b, #d97706)" : "linear-gradient(135deg,#7c3aed,#4f46e5)"),
+                            color: willExceedLimit ? "#ef4444" : "#fff",
+                            border: willExceedLimit ? "1px solid rgba(239, 68, 68, 0.4)" : "none",
+                            borderRadius: 14,
+                            padding: "18px 16px",
+                            fontWeight: 800,
+                            fontSize: 16,
+                            cursor: (isLoading || !destination || !amount || willExceedLimit) ? "not-allowed" : "pointer",
+                            fontFamily: "'Nunito',sans-serif",
+                            position: "relative",
+                            overflow: "hidden",
+                            boxShadow: isSubscribed && !willExceedLimit ? "0 8px 25px -6px rgba(245,158,11,0.5)" : "0 8px 25px -6px rgba(124,58,237,0.4)",
+                        }}
+                    >
+                        {isSubscribed && !willExceedLimit && !(isLoading || !destination || !amount) && (
+                            <motion.div
+                                animate={{ left: ["-100%", "200%"] }}
+                                transition={{ repeat: Infinity, duration: 2.5, ease: "easeInOut", repeatDelay: 3 }}
+                                style={{ position: "absolute", top: 0, bottom: 0, width: "25%", background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent)", transform: "skewX(-20deg)" }}
+                            />
+                        )}
+                        {willExceedLimit ? "Limit Exceeded" : (isLoading ? "Processing..." : "Authorize Transaction")}
+                    </motion.button>
+                </motion.div>
+
+                <motion.div
+                    animate={isSubscribed ? {
+                        boxShadow: ["0px 0px 0px rgba(245,158,11,0)", "0px 10px 40px rgba(245,158,11,0.12)", "0px 0px 0px rgba(245,158,11,0)"],
+                        borderColor: ["rgba(255,255,255,0.06)", "rgba(245,158,11,0.2)", "rgba(255,255,255,0.06)"]
+                    } : {}}
+                    transition={{ duration: 5, delay: 2.5, repeat: Infinity, ease: "easeInOut" }}
+                    style={{
+                        background: isSubscribed ? "rgba(15, 17, 26, 0.6)" : "rgba(255,255,255,.04)",
+                        backdropFilter: "blur(24px)",
+                        border: "1px solid rgba(255,255,255,.06)",
+                        borderRadius: 24,
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 40,
+                        position: "relative",
+                        overflow: "hidden",
+                        minHeight: 400
+                    }}
+                >
                     {isSubscribed && (
                         <>
-                            <FloatingNode delay={0} x="10%" y="15%" size={5} color="#f59e0b" blur={1} />
-                            <FloatingNode delay={0.5} x="85%" y="25%" size={8} color="#10b981" blur={2} />
-                            <FloatingNode delay={1.2} x="20%" y="80%" size={4} color="#a78bfa" blur={0} />
-                            <FloatingNode delay={0.8} x="80%" y="75%" size={6} color="#f59e0b" blur={1.5} />
+                            <FloatingNode delay={0} x="15%" y="20%" size={6} color="#f59e0b" blur={2} />
+                            <FloatingNode delay={0.7} x="85%" y="30%" size={12} color="#10b981" blur={4} />
+                            <FloatingNode delay={1.5} x="25%" y="75%" size={5} color="#a78bfa" blur={1} />
+                            <FloatingNode delay={1.0} x="75%" y="70%" size={8} color="#f59e0b" blur={3} />
                         </>
                     )}
 
                     {!isScanning && !txHash && (
-                        <div style={{ textAlign: "center", color: "#6b7280", fontSize: 14, zIndex: 10 }}>
-                            <div style={{ fontSize: 44, marginBottom: 16 }}>💸</div>
-                            Fill out the details on the left or scan a QR code to initiate a secure blockchain transfer.
-                        </div>
+                        <motion.div
+                            animate={isSubscribed ? { y: [-8, 8, -8] } : {}}
+                            transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+                            style={{ textAlign: "center", color: "#9ca3af", fontSize: 15, zIndex: 10, maxWidth: 280, lineHeight: 1.6 }}
+                        >
+                            <div style={{ fontSize: 56, marginBottom: 20, filter: isSubscribed ? "drop-shadow(0 0 20px rgba(245,158,11,0.4))" : "none" }}>💸</div>
+                            Enter details or scan a supplier's QR code to initiate a secure blockchain transfer.
+                        </motion.div>
                     )}
 
                     {isScanning && (
                         <div style={{ width: "100%", display: "flex", flexDirection: "column", alignItems: "center", zIndex: 10 }}>
-                            <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#60a5fa", letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 20 }}>Point at Supplier QR</div>
-                            <div style={{ width: "100%", maxWidth: 280, borderRadius: 16, overflow: "hidden", border: "2px solid #60a5fa", boxShadow: "0 0 20px rgba(96,165,250,0.2)" }}>
+                            <div style={{ fontSize: 12, fontFamily: "'DM Mono',monospace", color: "#60a5fa", letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 24, fontWeight: 700 }}>Point at Supplier QR</div>
+                            <div style={{ width: "100%", maxWidth: 300, borderRadius: 20, overflow: "hidden", border: "2px solid #60a5fa", boxShadow: "0 0 30px rgba(96,165,250,0.3)" }}>
                                 <Scanner onScan={(result) => handleScan(result[0].rawValue)} />
                             </div>
                         </div>
                     )}
 
                     {txHash && !isScanning && (
-                        <div style={{ textAlign: "center", width: "100%", zIndex: 10 }}>
-                            <div style={{ width: 64, height: 64, background: "#10b981", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px", fontSize: 32, color: "#fff", boxShadow: "0 8px 20px rgba(16,185,129,0.3)" }}>✓</div>
-                            <h3 style={{ color: "#fff", margin: "0 0 20px 0", fontFamily: "'Nunito',sans-serif", fontSize: 22 }}>Transfer Complete</h3>
+                        <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", bounce: 0.5 }} style={{ textAlign: "center", width: "100%", zIndex: 10 }}>
+                            <div style={{ width: 80, height: 80, background: "linear-gradient(135deg, #10b981, #059669)", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 24px", fontSize: 40, color: "#fff", boxShadow: "0 10px 30px rgba(16,185,129,0.4)" }}>✓</div>
+                            <h3 style={{ color: "#fff", margin: "0 0 24px 0", fontFamily: "'Nunito',sans-serif", fontSize: 26, fontWeight: 900 }}>Transfer Verified</h3>
 
-                            <div style={{ background: "rgba(0,0,0,.4)", border: "1px solid rgba(255,255,255,0.05)", padding: 20, borderRadius: 12, textAlign: "left", marginBottom: 28, backdropFilter: "blur(8px)" }}>
-                                <div style={{ fontSize: 10, color: "#9ca3af", textTransform: "uppercase", marginBottom: 6, letterSpacing: "0.05em" }}>Tx Hash</div>
-                                <a href={`https://stellar.expert/explorer/testnet/tx/${txHash}`} target="_blank" rel="noreferrer" style={{ color: "#34d399", fontSize: 12, wordBreak: "break-all", fontFamily: "'DM Mono',monospace", textDecoration: "none" }}>
+                            <div style={{ background: "rgba(0,0,0,.4)", border: "1px solid rgba(255,255,255,0.08)", padding: 24, borderRadius: 16, textAlign: "left", marginBottom: 32, backdropFilter: "blur(12px)" }}>
+                                <div style={{ fontSize: 11, color: "#9ca3af", textTransform: "uppercase", marginBottom: 8, letterSpacing: "0.05em", fontWeight: 700 }}>Stellar Tx Hash</div>
+                                <a href={`${sysConfig.networkPassphrase === Networks.TESTNET ? "https://stellar.expert/explorer/testnet/tx/" : "https://stellar.expert/explorer/public/tx/"}${txHash}`} target="_blank" rel="noreferrer" style={{ color: "#34d399", fontSize: 13, wordBreak: "break-all", fontFamily: "'DM Mono',monospace", textDecoration: "none", lineHeight: 1.5 }}>
                                     {txHash}
                                 </a>
                             </div>
 
-                            {/* ⚡ DUAL SPEED BADGES */}
-                            <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
-                                <div style={{ background: "rgba(16,185,129,0.15)", color: "#10b981", border: "1px solid rgba(16,185,129,0.3)", borderRadius: 20, padding: "8px 16px", fontSize: 12, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>
+                            <div style={{ display: "flex", gap: 16, justifyContent: "center" }}>
+                                <div style={{ background: "rgba(16,185,129,0.1)", color: "#10b981", border: "1px solid rgba(16,185,129,0.2)", borderRadius: 24, padding: "10px 20px", fontSize: 13, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>
                                     ⚡ Network: {speeds.network}s
                                 </div>
-                                <div style={{ background: "rgba(167, 139, 250, 0.15)", color: "#a78bfa", border: "1px solid rgba(167, 139, 250, 0.3)", borderRadius: 20, padding: "8px 16px", fontSize: 12, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>
+                                <div style={{ background: "rgba(167, 139, 250, 0.1)", color: "#a78bfa", border: "1px solid rgba(167, 139, 250, 0.2)", borderRadius: 24, padding: "10px 20px", fontSize: 13, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>
                                     ⏱️ Total: {speeds.total}s
                                 </div>
                             </div>
-                        </div>
+                        </motion.div>
                     )}
                 </motion.div>
             </div>
         </div>
     );
-}   
+}

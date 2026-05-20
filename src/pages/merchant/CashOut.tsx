@@ -1,3 +1,6 @@
+// ==========================================
+// 1. IMPORTS
+// ==========================================
 import React, { useState, useEffect } from "react";
 import { auth, db } from "../../config/firebase";
 import { onAuthStateChanged, type User } from "firebase/auth";
@@ -7,13 +10,11 @@ import { signTransaction } from "@stellar/freighter-api";
 import { AnimatePresence, motion } from "framer-motion";
 import { LoadingOverlay } from "../../components/ui/LoadingOverlay";
 
-const HORIZON_URL = "https://horizon-testnet.stellar.org";
-const ANCHOR_ADDRESS = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
-
-const TOKEN_ISSUERS: Record<string, string> = {
-  PHPC: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
-  USDC: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
-};
+// ==========================================
+// 2. CONSTANTS & TYPES
+// ==========================================
+const FALLBACK_ANCHOR = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+const FALLBACK_USDC = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
 
 const BANK_LOGOS: Record<string, string> = {
   BPI: "https://upload.wikimedia.org/wikipedia/en/c/c2/Bank_of_the_Philippine_Islands_logo.svg",
@@ -36,53 +37,81 @@ interface ReceiptData {
   totalWaitTime: string;
 }
 
+// ==========================================
+// 3. MAIN COMPONENT
+// ==========================================
 export default function CashOut() {
+
+  // --- AUTH & SYSTEM STATE ---
   const [user, setUser] = useState<User | null>(null);
   const [merchantAddress, setMerchantAddress] = useState<string>("");
+  const [sysConfig, setSysConfig] = useState({
+    networkPassphrase: Networks.TESTNET,
+    horizonUrl: "https://horizon-testnet.stellar.org",
+    phpcIssuer: FALLBACK_ANCHOR,
+    anchorAddress: FALLBACK_ANCHOR
+  });
 
-  // Form States
+  // --- FORM STATES ---
   const [anchor, setAnchor] = useState<"pdax" | "palawan">("pdax");
-
-  // Bidirectional Input States
   const [inputMode, setInputMode] = useState<"token" | "php">("token");
   const [tokenAmount, setTokenAmount] = useState<string>("5000");
   const [phpAmount, setPhpAmount] = useState<string>("5000");
 
-  // Real Destination States
+  // --- DESTINATION STATES ---
   const [payoutMethod, setPayoutMethod] = useState<"bank" | "gcash" | "qr">("bank");
   const [bankName, setBankName] = useState<string>("BPI");
   const [accountName, setAccountName] = useState<string>("");
   const [accountNumber, setAccountNumber] = useState<string>("");
   const [qrUploaded, setQrUploaded] = useState<boolean>(false);
 
-  // UI & Receipt States
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [loadingMsg, setLoadingMsg] = useState<string>("");
+  // --- UI, DATA & RECEIPT STATES ---
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [loadingMsg, setLoadingMsg] = useState<string>("Initializing system...");
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
-
   const [selectedToken, setSelectedToken] = useState<"XLM" | "PHPC" | "USDC">("PHPC");
   const [rates, setRates] = useState<any>(null);
-
   const [balance, setBalance] = useState<string>("0.00");
 
-  const fetchBalance = async (address: string, tokenType: string) => {
-    try {
-      const server = new Horizon.Server(HORIZON_URL);
-      const account = await server.loadAccount(address);
+  // ==========================================
+  // 4. SYSTEM INITIALIZATION & DATA FETCHING
+  // ==========================================
 
-      // Find the specific asset balance
-      const balanceObj = account.balances.find((b: any) => {
-        if (tokenType === "XLM") return b.asset_type === "native";
-        return b.asset_code === tokenType && b.asset_issuer === TOKEN_ISSUERS[tokenType];
-      });
+  // Load Global Config & Authenticate User
+  useEffect(() => {
+    const initSystem = async () => {
+      try {
+        const configSnap = await getDoc(doc(db, "system_config", "global"));
+        if (configSnap.exists()) {
+          const c = configSnap.data();
+          const isTestnet = c.stellarNetwork === "Testnet (Futurenet)";
+          setSysConfig({
+            networkPassphrase: isTestnet ? Networks.TESTNET : Networks.PUBLIC,
+            horizonUrl: isTestnet ? "https://horizon-testnet.stellar.org" : "https://horizon.stellar.org",
+            phpcIssuer: c.phpcIssuerAddress || FALLBACK_ANCHOR,
+            anchorAddress: FALLBACK_ANCHOR // Routing to fallback for demo
+          });
+        }
 
-      setBalance(balanceObj ? parseFloat(balanceObj.balance).toLocaleString() : "0.00");
-    } catch (e) {
-      setBalance("0.00");
-      console.error("Balance fetch error:", e);
-    }
-  };
+        onAuthStateChanged(auth, async (currentUser) => {
+          setUser(currentUser);
+          if (currentUser) {
+            const merchantDoc = await getDoc(doc(db, "merchants", currentUser.uid));
+            if (merchantDoc.exists() && merchantDoc.data().stellarPublicKey) {
+              setMerchantAddress(merchantDoc.data().stellarPublicKey);
+            }
+          }
+          setIsLoading(false);
+        });
+      } catch (err) {
+        console.error("Initialization failed:", err);
+        setIsLoading(false);
+      }
+    };
+    initSystem();
+  }, []);
 
+  // Fetch Live Rates
   useEffect(() => {
     const fetchRates = async () => {
       try {
@@ -96,26 +125,32 @@ export default function CashOut() {
     fetchRates();
   }, []);
 
+  // Fetch On-Chain Balance dynamically
   useEffect(() => {
-    if (merchantAddress) {
-      fetchBalance(merchantAddress, selectedToken);
-    }
-  }, [merchantAddress, selectedToken]);
+    if (!merchantAddress) return;
+    const fetchBalance = async () => {
+      try {
+        const server = new Horizon.Server(sysConfig.horizonUrl);
+        const account = await server.loadAccount(merchantAddress);
 
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
-      if (currentUser) {
-        const merchantDoc = await getDoc(doc(db, "merchants", currentUser.uid));
-        if (merchantDoc.exists() && merchantDoc.data().stellarPublicKey) {
-          setMerchantAddress(merchantDoc.data().stellarPublicKey);
-        }
+        const balanceObj = account.balances.find((b: any) => {
+          if (selectedToken === "XLM") return b.asset_type === "native";
+          const targetIssuer = selectedToken === "PHPC" ? sysConfig.phpcIssuer : FALLBACK_USDC;
+          return b.asset_code === selectedToken && b.asset_issuer === targetIssuer;
+        });
+
+        setBalance(balanceObj ? parseFloat(balanceObj.balance).toLocaleString() : "0.00");
+      } catch (e) {
+        setBalance("0.00");
       }
-    });
-    return () => unsubscribe();
-  }, []);
+    };
+    fetchBalance();
+  }, [merchantAddress, selectedToken, sysConfig.horizonUrl, sysConfig.phpcIssuer]);
 
-  // --- BIDIRECTIONAL CONVERSION LOGIC ---
+  // ==========================================
+  // 5. BIDIRECTIONAL AMOUNT CONVERSION
+  // ==========================================
+
   const handleTokenAmountChange = (val: string) => {
     setTokenAmount(val);
     setInputMode("token");
@@ -142,7 +177,6 @@ export default function CashOut() {
     else if (selectedToken === "XLM") setTokenAmount((amt / rates.stellar.php).toFixed(7));
   };
 
-  // Recalculate when token or rate changes
   useEffect(() => {
     if (inputMode === "token") handleTokenAmountChange(tokenAmount);
     else handlePhpAmountChange(phpAmount);
@@ -151,7 +185,9 @@ export default function CashOut() {
   const numericBalance = parseFloat(balance.replace(/,/g, '') || "0");
   const isOverBalance = parseFloat(tokenAmount || "0") > numericBalance;
 
-  // --- THE NEW FIRESTORE LOGGING HELPER FOR CASHOUTS ---
+  // ==========================================
+  // 6. FIRESTORE LOGGING HELPER
+  // ==========================================
   const saveCashoutToFirestore = async (
     cashoutId: string,
     status: "PROCESSING_BANK_WIRE" | "failed" | "cancelled",
@@ -184,48 +220,48 @@ export default function CashOut() {
     }
   };
 
+  // ==========================================
+  // 7. SECURE CASHOUT LOGIC
+  // ==========================================
   const handleCashOut = async () => {
     if (!user) return alert("Please log in to continue.");
     if (!merchantAddress) return alert("Please connect your Freighter wallet in settings.");
     if (!tokenAmount || parseFloat(tokenAmount) <= 0) return alert("Please enter a valid amount.");
     if (isOverBalance) return alert("Amount exceeds available balance.");
 
-    // Form Validation
-    if (payoutMethod !== "qr" && (!accountName || !accountNumber)) {
-      return alert("Please enter the receiving account name and number.");
-    }
-    if (payoutMethod === "qr" && !qrUploaded) {
-      return alert("Please upload your receiving QR code.");
-    }
+    if (payoutMethod !== "qr" && (!accountName || !accountNumber)) return alert("Please enter the receiving account name and number.");
+    if (payoutMethod === "qr" && !qrUploaded) return alert("Please upload your receiving QR code.");
 
     const startTime = Date.now();
     const shortId = `CO-${Math.floor(Date.now() / 1000)}`;
-    let cashoutLogged = false; // Flag to prevent duplicate logging in the catch block
+    let cashoutLogged = false;
 
     setIsLoading(true);
     setLoadingMsg(`Securing connection to ${anchor.toUpperCase()}...`);
     setReceipt(null);
 
     try {
-      const server = new Horizon.Server(HORIZON_URL);
+      const server = new Horizon.Server(sysConfig.horizonUrl);
       const sourceAccount = await server.loadAccount(merchantAddress);
 
-      // BUILD ASSET DYNAMICALLY
+      // Construct dynamic asset based on Global Config
       let asset: Asset;
       if (selectedToken === "XLM") {
         asset = Asset.native();
+      } else if (selectedToken === "PHPC") {
+        asset = new Asset("PHPC", sysConfig.phpcIssuer);
       } else {
-        asset = new Asset(selectedToken, TOKEN_ISSUERS[selectedToken]);
+        asset = new Asset("USDC", FALLBACK_USDC);
       }
 
       const txMemo = Memo.text(shortId);
 
       const transaction = new TransactionBuilder(sourceAccount, {
         fee: "1000",
-        networkPassphrase: Networks.TESTNET,
+        networkPassphrase: sysConfig.networkPassphrase,
       })
         .addOperation(Operation.payment({
-          destination: ANCHOR_ADDRESS,
+          destination: sysConfig.anchorAddress,
           asset: asset,
           amount: parseFloat(tokenAmount).toFixed(7),
         }))
@@ -236,8 +272,8 @@ export default function CashOut() {
       setLoadingMsg("Awaiting Freighter Signature...");
 
       const signResponse = await signTransaction(transaction.toXDR(), {
-        network: "TESTNET",
-        networkPassphrase: Networks.TESTNET,
+        network: sysConfig.networkPassphrase === Networks.TESTNET ? "TESTNET" : "PUBLIC",
+        networkPassphrase: sysConfig.networkPassphrase,
       });
 
       if (!signResponse || signResponse.error) {
@@ -255,7 +291,7 @@ export default function CashOut() {
       const txBody = new URLSearchParams();
       txBody.append("tx", signedXdrString);
 
-      const submitResponse = await fetch(`${HORIZON_URL}/transactions`, {
+      const submitResponse = await fetch(`${sysConfig.horizonUrl}/transactions`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: txBody.toString()
@@ -265,7 +301,6 @@ export default function CashOut() {
       const receiveTime = Date.now();
 
       if (!submitResponse.ok) {
-        console.error("Full Network Error:", responseData);
         let exactError = "Unknown Network Error";
         if (responseData.extras && responseData.extras.result_codes) {
           const codes = responseData.extras.result_codes;
@@ -277,7 +312,7 @@ export default function CashOut() {
         await saveCashoutToFirestore(shortId, "failed", "", "0.00", totalSpeed, exactError);
 
         if (exactError.includes("op_src_no_trust")) {
-          throw new Error(`Failed: YOUR wallet does not trust ${selectedToken}. Please add it to your Freighter wallet first.`);
+          throw new Error(`Failed: YOUR wallet does not trust ${selectedToken}.`);
         } else if (exactError.includes("op_underfunded")) {
           throw new Error("Failed: Your wallet does not have enough funds to cash out this amount.");
         } else {
@@ -330,13 +365,10 @@ export default function CashOut() {
 
     } catch (error: any) {
       console.error(error);
-
-      // Fallback logging for any unexpected errors that weren't caught above
       if (!cashoutLogged) {
         const totalSpeed = ((Date.now() - startTime) / 1000).toFixed(2);
         await saveCashoutToFirestore(shortId, "failed", "", "0.00", totalSpeed, error.message || "Unknown error occurred.");
       }
-
       alert(error.message || "Failed to process cash out.");
     } finally {
       setIsLoading(false);
@@ -354,6 +386,9 @@ export default function CashOut() {
     setQrUploaded(false);
   };
 
+  // ==========================================
+  // 8. RENDER UI
+  // ==========================================
   return (
     <div style={{ position: "relative", minHeight: "80vh" }}>
       <AnimatePresence>
@@ -673,7 +708,7 @@ export default function CashOut() {
                 <button onClick={handlePrint} style={{ flex: 1, background: "rgba(255,255,255,.05)", color: "#fff", border: "1px solid rgba(255,255,255,.1)", borderRadius: 8, padding: "12px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "'Nunito',sans-serif" }}>
                   🖨️ Print Receipt
                 </button>
-                <a href={`https://stellar.expert/explorer/testnet/tx/${receipt.hash}`} target="_blank" rel="noreferrer" style={{ flex: 1, textDecoration: "none" }}>
+                <a href={`${sysConfig.networkPassphrase === Networks.TESTNET ? "https://stellar.expert/explorer/testnet/tx/" : "https://stellar.expert/explorer/public/tx/"}${receipt.hash}`} target="_blank" rel="noreferrer" style={{ flex: 1, textDecoration: "none" }}>
                   <button style={{ width: "100%", background: "rgba(124,58,237,.15)", color: "#a78bfa", border: "1px solid rgba(124,58,237,.3)", borderRadius: 8, padding: "12px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "'Nunito',sans-serif" }}>
                     🔗 View on Explorer
                   </button>

@@ -1,32 +1,56 @@
-import React from "react";
 
-// 1. Define the props the component expects to receive
+import React, { useState, useEffect } from "react";
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "../../config/firebase";
+
 interface MonthlyUsageCardProps {
     monthlyUsage: number;
     isSubscribed: boolean;
-    usageLimit?: number; // Defaults to 5000
-    projectedUsage?: number; // NEW: Tracks the active input amount
+    usageLimit?: number;
+    projectedUsage?: number;
 }
 
 export default function MonthlyUsageCard({
     monthlyUsage,
     isSubscribed,
-    usageLimit = 5000,
+    usageLimit,
     projectedUsage = 0
 }: MonthlyUsageCardProps) {
 
-    // 2. Calculate the UI states based on the effective usage
-    const effectiveUsage = projectedUsage > monthlyUsage ? projectedUsage : monthlyUsage;
-    const isOverLimit = effectiveUsage > usageLimit;
+    const [globalLimit, setGlobalLimit] = useState<number>(100000);
 
-    // Calculate percentages for the stacked progress bar
-    const basePercentage = Math.min((monthlyUsage / usageLimit) * 100, 100);
+    useEffect(() => {
+        const fetchGlobalLimit = async () => {
+            try {
+                const configSnap = await getDoc(doc(db, "system_config", "global"));
+                if (configSnap.exists()) {
+                    const configData = configSnap.data();
+                    if (configData.freeTierMonthlyCap) {
+                        setGlobalLimit(configData.freeTierMonthlyCap);
+                    }
+                }
+            } catch (error) {
+                console.error("Failed to fetch global usage limit:", error);
+            }
+        };
+
+        if (usageLimit === undefined) {
+            fetchGlobalLimit();
+        }
+    }, [usageLimit]);
+    const activeLimit = usageLimit !== undefined ? usageLimit : globalLimit;
+
+    const effectiveUsage = projectedUsage > monthlyUsage ? projectedUsage : monthlyUsage;
+    const isOverLimit = effectiveUsage > activeLimit;
+
+    const basePercentage = Math.min((monthlyUsage / activeLimit) * 100, 100);
     const projectedPercentage = projectedUsage > monthlyUsage
-        ? Math.min(((projectedUsage - monthlyUsage) / usageLimit) * 100, 100)
+        ? Math.min(((projectedUsage - monthlyUsage) / activeLimit) * 100, 100)
         : 0;
 
     return (
         <div style={{ background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.08)", borderRadius: 12, padding: "16px 20px", marginBottom: 24, display: "flex", flexDirection: "column", gap: 10 }}>
+
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 12, color: "#9ca3af", fontFamily: "'DM Mono',monospace", textTransform: "uppercase", letterSpacing: ".05em" }}>
                     Monthly Volume {projectedUsage > monthlyUsage && !isSubscribed && <span style={{ color: isOverLimit ? "#ef4444" : "#fcd34d" }}>(Projected)</span>}
@@ -34,13 +58,13 @@ export default function MonthlyUsageCard({
                 <span style={{ fontSize: 13, color: isSubscribed ? "#10b981" : (isOverLimit ? "#ef4444" : "#a78bfa"), fontWeight: 700 }}>
                     {isSubscribed
                         ? "Unlimited (Subscribed)"
-                        : `${effectiveUsage.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })} / ${usageLimit.toLocaleString()} PHP`}
+                        : `${effectiveUsage.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })} / ${activeLimit.toLocaleString()} PHP`}
                 </span>
             </div>
 
             {!isSubscribed && (
                 <div style={{ width: "100%", height: 6, background: "rgba(255,255,255,.06)", borderRadius: 4, overflow: "hidden", display: "flex" }}>
-                    {/* Base Usage Bar */}
+
                     <div
                         style={{
                             width: `${basePercentage}%`,
@@ -49,7 +73,7 @@ export default function MonthlyUsageCard({
                             transition: "width 0.3s ease, background 0.3s ease"
                         }}
                     />
-                    {/* Projected Usage Ghost Bar */}
+
                     {projectedPercentage > 0 && (
                         <div
                             style={{
@@ -61,6 +85,7 @@ export default function MonthlyUsageCard({
                             }}
                         />
                     )}
+
                 </div>
             )}
         </div>

@@ -1,3 +1,6 @@
+// ==========================================
+// 1. IMPORTS & TYPES
+// ==========================================
 import React, { useState, useEffect } from "react";
 import { auth, db } from "../../config/firebase";
 import { onAuthStateChanged, type User } from "firebase/auth";
@@ -7,52 +10,86 @@ import { signTransaction } from "@stellar/freighter-api";
 import { AnimatePresence, motion } from "framer-motion";
 import { LoadingOverlay } from "../../components/ui/LoadingOverlay";
 
-const HORIZON_URL = "https://horizon-testnet.stellar.org";
-const TREASURY_ADDRESS = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+// Fallback values in case the config document isn't fully set up yet
+const FALLBACK_TREASURY = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+const FALLBACK_USDC = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
 
-const TOKEN_ISSUERS = {
-  PHPC: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
-  USDC: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
-};
-
+// ==========================================
+// 2. MAIN COMPONENT
+// ==========================================
 export default function Subscription() {
+
+  // --- USER & AUTH STATE ---
   const [user, setUser] = useState<User | null>(null);
   const [isSubscribed, setIsSubscribed] = useState<boolean>(false);
   const [merchantAddress, setMerchantAddress] = useState<string>("");
 
-  // UI, Modal, & Token Selection States
+  // --- SYSTEM CONFIG STATE ---
+  const [sysConfig, setSysConfig] = useState({
+    proFee: 499,
+    freeCap: 100000,
+    networkPassphrase: Networks.TESTNET,
+    horizonUrl: "https://horizon-testnet.stellar.org",
+    phpcIssuer: FALLBACK_TREASURY,
+  });
+
+  // --- UI & MODAL STATES ---
   const [showModal, setShowModal] = useState<boolean>(false);
   const [selectedToken, setSelectedToken] = useState<"XLM" | "PHPC" | "USDC">("USDC");
-  const [cryptoAmount, setCryptoAmount] = useState<string>("8.91"); // Calculated dynamically
+  const [cryptoAmount, setCryptoAmount] = useState<string>("0.00");
   const [ratesData, setRatesData] = useState<any>(null);
 
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [loadingMsg, setLoadingMsg] = useState("Checking billing status...");
+  const [loadingMsg, setLoadingMsg] = useState("Initializing system...");
 
-  // 1. LISTEN FOR AUTH AND SYNC BILLING FROM FIRESTORE
+  // ==========================================
+  // 3. INITIALIZATION (FETCH CONFIG & USER)
+  // ==========================================
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
-      if (currentUser) {
-        try {
-          const merchantDoc = await getDoc(doc(db, "merchants", currentUser.uid));
-          if (merchantDoc.exists()) {
-            const data = merchantDoc.data();
-            setIsSubscribed(data?.isSubscribed === true);
-            if (data?.stellarPublicKey) {
-              setMerchantAddress(data.stellarPublicKey);
+    const initSystem = async () => {
+      try {
+        // 1. Fetch Global Platform Config
+        const configSnap = await getDoc(doc(db, "system_config", "global"));
+        if (configSnap.exists()) {
+          const c = configSnap.data();
+          const isTestnet = c.stellarNetwork === "Testnet (Futurenet)";
+
+          setSysConfig({
+            proFee: c.proTierMonthlyFee || 499,
+            freeCap: c.freeTierMonthlyCap || 100000,
+            networkPassphrase: isTestnet ? Networks.TESTNET : Networks.PUBLIC,
+            horizonUrl: isTestnet ? "https://horizon-testnet.stellar.org" : "https://horizon.stellar.org",
+            phpcIssuer: c.phpcIssuerAddress || FALLBACK_TREASURY,
+          });
+        }
+
+        // 2. Listen for Auth & Sync Billing
+        onAuthStateChanged(auth, async (currentUser) => {
+          setUser(currentUser);
+          if (currentUser) {
+            const merchantDoc = await getDoc(doc(db, "merchants", currentUser.uid));
+            if (merchantDoc.exists()) {
+              const data = merchantDoc.data();
+              setIsSubscribed(data?.isSubscribed === true);
+              if (data?.stellarPublicKey) {
+                setMerchantAddress(data.stellarPublicKey);
+              }
             }
           }
-        } catch (err) {
-          console.error("Error fetching subscription data:", err);
-        }
+          setIsLoading(false);
+        });
+      } catch (err) {
+        console.error("Initialization error:", err);
+        setIsLoading(false);
       }
-      setIsLoading(false);
-    });
-    return () => unsubscribe();
+    };
+
+    initSystem();
   }, []);
 
-  // 2. FETCH LIVE EXCHANGE RATES FOR CONVERSION
+  // ==========================================
+  // 4. LIVE EXCHANGE RATE CALCULATIONS
+  // ==========================================
   useEffect(() => {
     if (!showModal) return;
 
@@ -69,18 +106,19 @@ export default function Subscription() {
     fetchRates();
   }, [showModal, selectedToken]);
 
+  // Recalculates exact crypto cost based on live PHP rates and the admin-defined proFee
   const calculateEquivalent = (token: "XLM" | "PHPC" | "USDC", data = ratesData) => {
     if (!data) return;
-    const subscriptionPricePHP = 499;
+    const fee = sysConfig.proFee;
 
     if (token === "PHPC") {
-      setCryptoAmount("499.00"); // 1:1 Peg
+      setCryptoAmount(fee.toFixed(2)); // 1:1 Peg
     } else if (token === "USDC") {
       const usdcToPhp = data['usd-coin'].php;
-      setCryptoAmount((subscriptionPricePHP / usdcToPhp).toFixed(2));
+      setCryptoAmount((fee / usdcToPhp).toFixed(2));
     } else if (token === "XLM") {
       const xlmToPhp = data.stellar.php;
-      setCryptoAmount((subscriptionPricePHP / xlmToPhp).toFixed(2));
+      setCryptoAmount((fee / xlmToPhp).toFixed(2));
     }
   };
 
@@ -90,7 +128,9 @@ export default function Subscription() {
     calculateEquivalent(nextToken);
   };
 
-  // 3. SECURE STELLAR PAYMENT ROUTER (UPGRADE)
+  // ==========================================
+  // 5. SECURE STELLAR PAYMENT ROUTER
+  // ==========================================
   const handleStellarUpgrade = async () => {
     if (!user) return alert("Please login to proceed.");
     if (!merchantAddress) return alert("Please connect your Freighter wallet in Settings first.");
@@ -100,20 +140,23 @@ export default function Subscription() {
     setLoadingMsg(`Preparing your ${selectedToken} transaction invoice...`);
 
     try {
-      const server = new Horizon.Server(HORIZON_URL);
+      const server = new Horizon.Server(sysConfig.horizonUrl);
       const sourceAccount = await server.loadAccount(merchantAddress);
 
+      // Dynamically select the correct asset issuer
       let paymentAsset = Asset.native();
-      if (selectedToken !== "XLM") {
-        paymentAsset = new Asset(selectedToken, TOKEN_ISSUERS[selectedToken]);
+      if (selectedToken === "PHPC") {
+        paymentAsset = new Asset("PHPC", sysConfig.phpcIssuer);
+      } else if (selectedToken === "USDC") {
+        paymentAsset = new Asset("USDC", FALLBACK_USDC);
       }
 
       const transaction = new TransactionBuilder(sourceAccount, {
         fee: "100",
-        networkPassphrase: Networks.TESTNET,
+        networkPassphrase: sysConfig.networkPassphrase,
       })
         .addOperation(Operation.payment({
-          destination: TREASURY_ADDRESS,
+          destination: FALLBACK_TREASURY, // Using fallback treasury for now
           asset: paymentAsset,
           amount: cryptoAmount,
         }))
@@ -123,8 +166,8 @@ export default function Subscription() {
       setLoadingMsg(`Awaiting Freighter signature for ${cryptoAmount} ${selectedToken}...`);
 
       const signResponse = await signTransaction(transaction.toXDR(), {
-        network: "TESTNET",
-        networkPassphrase: Networks.TESTNET,
+        network: sysConfig.networkPassphrase === Networks.TESTNET ? "TESTNET" : "PUBLIC",
+        networkPassphrase: sysConfig.networkPassphrase,
       });
 
       if (!signResponse || signResponse.error) {
@@ -139,7 +182,7 @@ export default function Subscription() {
       const txBody = new URLSearchParams();
       txBody.append("tx", signedXdrString);
 
-      const submitResponse = await fetch(`${HORIZON_URL}/transactions`, {
+      const submitResponse = await fetch(`${sysConfig.horizonUrl}/transactions`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: txBody.toString()
@@ -165,11 +208,12 @@ export default function Subscription() {
     }
   };
 
-  // 4. DOWNGRADE / UNSUBSCRIBE LOGIC
+  // ==========================================
+  // 6. DOWNGRADE LOGIC
+  // ==========================================
   const handleDowngrade = async () => {
     if (!user) return;
 
-    // Warn the user before they cancel
     const confirmCancel = window.confirm(
       "Are you sure you want to unsubscribe and downgrade to the Standard tier?\n\n⚠️ Please note: Previous subscription payments are strictly non-refundable."
     );
@@ -193,6 +237,9 @@ export default function Subscription() {
     }
   };
 
+  // ==========================================
+  // 7. RENDER UI
+  // ==========================================
   return (
     <div style={{ position: "relative", minHeight: "80vh" }}>
       <AnimatePresence>
@@ -211,8 +258,34 @@ export default function Subscription() {
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
         {[
-          { name: "Standard", price: "₱0", period: "/ month", current: !isSubscribed, features: [["✓", "Up to ₱5,000 monthly volume limit"], ["✓", "Unlimited invoices generated"], ["✓", "QR code generation"], ["–", "Advanced analytics tools"], ["–", "API production access"], ["–", "Priority customer support"]] },
-          { name: "Pro", price: "₱499", period: "/ month", current: isSubscribed, features: [["✓", "Unlimited monthly volume limit"], ["✓", "Unlimited invoices generated"], ["✓", "QR code generation"], ["✓", "Advanced analytics tools"], ["✓", "API production access"], ["✓", "Priority customer support"]] },
+          {
+            name: "Standard",
+            price: "₱0",
+            period: "/ month",
+            current: !isSubscribed,
+            features: [
+              ["✓", `Up to ₱${sysConfig.freeCap.toLocaleString()} monthly volume limit`],
+              ["✓", "Unlimited invoices generated"],
+              ["✓", "QR code generation"],
+              ["–", "Advanced analytics tools"],
+              ["–", "API production access"],
+              ["–", "Priority customer support"]
+            ]
+          },
+          {
+            name: "Pro",
+            price: `₱${sysConfig.proFee}`,
+            period: "/ month",
+            current: isSubscribed,
+            features: [
+              ["✓", "Unlimited monthly volume limit"],
+              ["✓", "Unlimited invoices generated"],
+              ["✓", "QR code generation"],
+              ["✓", "Advanced analytics tools"],
+              ["✓", "API production access"],
+              ["✓", "Priority customer support"]
+            ]
+          },
         ].map(plan => (
           <div key={plan.name} style={{ border: `1px solid ${plan.current ? "rgba(124,58,237,.5)" : "rgba(255,255,255,.08)"}`, borderRadius: 14, padding: 24, background: plan.current ? "rgba(124,58,237,.06)" : "rgba(255,255,255,.04)" }}>
             <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'Nunito',sans-serif", color: "#a78bfa", marginBottom: 6 }}>{plan.name}</div>
@@ -245,7 +318,7 @@ export default function Subscription() {
       </div>
 
       <div style={{ padding: "14px 20px", background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.08)", borderRadius: 10, fontSize: 13, color: "#9ca3af", lineHeight: 1.7 }}>
-        💡 A merchant processing ₱100k/month saves <strong style={{ color: "#a78bfa" }}>₱2,500+</strong> in traditional gateway fees. Pro at ₱499 is a <strong style={{ color: "#fff" }}>5× ROI</strong> the moment you exceed the free tier.
+        💡 A merchant processing ₱{sysConfig.freeCap.toLocaleString()}/month saves <strong style={{ color: "#a78bfa" }}>₱2,500+</strong> in traditional gateway fees. Pro at ₱{sysConfig.proFee} is a <strong style={{ color: "#fff" }}>5× ROI</strong> the moment you exceed the free tier.
       </div>
 
       {/* --- PRODUCTION CHECKOUT MODAL --- */}
@@ -253,7 +326,7 @@ export default function Subscription() {
         <div style={{ position: "fixed", inset: 0, background: "rgba(8,11,20,.85)", backdropFilter: "blur(4px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
           <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="w-full max-w-md" style={{ background: "#111625", border: "1px solid rgba(255,255,255,.1)", borderRadius: 16, padding: 24, boxShadow: "0 20px 25px -5px rgba(0,0,0,0.5)" }}>
             <h3 style={{ color: "#fff", fontFamily: "'Nunito', sans-serif", fontSize: 20, fontWeight: 800, margin: "0 0 8px 0" }}>Premium Subscription Checkout</h3>
-            <p style={{ color: "#9ca3af", fontSize: 13, margin: "0 0 20px 0" }}>Select your preferred asset to settle the monthly platform tier fee of <strong>₱499.00 PHP</strong>.</p>
+            <p style={{ color: "#9ca3af", fontSize: 13, margin: "0 0 20px 0" }}>Select your preferred asset to settle the monthly platform tier fee of <strong>₱{sysConfig.proFee.toFixed(2)} PHP</strong>.</p>
 
             {/* TOKEN ASSET SELECTOR CHIPS */}
             <div style={{ marginBottom: 20 }}>
