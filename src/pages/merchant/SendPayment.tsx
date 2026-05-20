@@ -303,9 +303,8 @@ export default function SendPayment() {
                 .build();
 
             const signResponse = await signTransaction(transaction.toXDR(), {
-                network: sysConfig.networkPassphrase === Networks.TESTNET ? "TESTNET" : "PUBLIC",
                 networkPassphrase: sysConfig.networkPassphrase,
-            });
+            });     
 
             if (!signResponse || signResponse.error) {
                 paymentLogged = true;
@@ -421,7 +420,7 @@ export default function SendPayment() {
 
             <AnimatePresence>
                 {isLoading && <LoadingOverlay isLoading={isLoading} message={loadingMsg} />}
-            </AnPresence>
+            </AnimatePresence>
 
             <div style={{ marginBottom: 32 }}>
                 <h1 style={{ fontSize: 36, fontWeight: 900, fontFamily: "'Nunito',sans-serif", color: "#fff", margin: 0, letterSpacing: "-0.02em" }}>

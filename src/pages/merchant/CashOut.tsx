@@ -255,7 +255,6 @@ export default function CashOut() {
       setLoadingMsg("Awaiting Freighter Signature...");
 
       const signResponse = await signTransaction(transaction.toXDR(), {
-        network: sysConfig.networkPassphrase === Networks.TESTNET ? "TESTNET" : "PUBLIC",
         networkPassphrase: sysConfig.networkPassphrase,
       });
 

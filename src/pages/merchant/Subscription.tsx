@@ -185,9 +185,8 @@ export default function Subscription() {
       setLoadingMsg(`Awaiting Freighter signature for ${cryptoAmount} ${selectedToken}...`);
 
       const signResponse = await signTransaction(transaction.toXDR(), {
-        network: sysConfig.networkPassphrase === Networks.TESTNET ? "TESTNET" : "PUBLIC",
         networkPassphrase: sysConfig.networkPassphrase,
-      });
+      })
 
       if (!signResponse || signResponse.error) {
         throw new Error("Payment signature rejected by user.");
@@ -324,7 +323,7 @@ export default function Subscription() {
           <div key={plan.name} className="sub-plan-card" style={{ border: `1px solid ${plan.current ? "rgba(124,58,237,.5)" : "rgba(255,255,255,.08)"}`, background: plan.current ? "rgba(124,58,237,.06)" : "rgba(255,255,255,.04)" }}>
             <div>
               <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'Nunito',sans-serif", color: "#a78bfa", marginBottom: 6 }}>{plan.name}</div>
-              <div style={{ fontSize: 28, fontWeight: 800, fontFamily: "'Nunito',sans-serif", color: "#fff", marginBottom: 18 }}>{plan.price} <span style={{ fontSize: 14, color: "#9ca3af", font400: "true" }}>{plan.period}</span></div>
+              <div style={{ fontSize: 28, fontWeight: 800, fontFamily: "'Nunito',sans-serif", color: "#fff", marginBottom: 18 }}>{plan.price} <span style={{ fontSize: 14, color: "#9ca3af", fontWeight: 400 }}>{plan.period}</span></div>
               {plan.features.map(([icon, feat], idx) => (
                 <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: icon === "✓" ? "#e5e7eb" : "#6b7280", marginBottom: 10 }}>
                   <span style={{ color: icon === "✓" ? "#4ade80" : "#374151" }}>{icon}</span>{feat}
