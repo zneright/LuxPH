@@ -7,7 +7,6 @@ on:
     branches:
       - main
 
-# Opt into the new execution environment globally
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
@@ -24,12 +23,14 @@ jobs:
           cache: 'npm'
 
       - name: Install Dependencies and Build
-        # Swapped 'npm ci' to 'npm install' to allow cross-platform binary resolution
         run: npm install && npm run build
-
+          
       - uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_LUXPH_8DC3D }}
           channelId: live
           projectId: luxph-8dc3d
+        env:
+          # 🚀 THIS IS THE LINE THAT FIXES YOUR ERROR
+          FIREBASE_CLI_EXPERIMENTS: webframeworks
