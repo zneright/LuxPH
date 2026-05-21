@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
+import { isConnected, requestAccess } from '@stellar/freighter-api';
 import { auth, db } from '../../config/firebase';
 import { onAuthStateChanged, type User } from 'firebase/auth';
-import { useWallet } from '../../contexts/WalletContext';
 import { doc, getDoc, setDoc, updateDoc, collection, getDocs } from 'firebase/firestore';
 import MonthlyUsageCard from "../../components/dashboard/MonthlyUsageCard";
 import InvoiceDashboard from './InvoiceDashboard';
 import { LoadingBadge } from "../../components/dashboard/LoadingBadge";
 import { motion } from "framer-motion";
+import { WalletNetwork, Wallet } from "@stellar/wallet-sdk";
 interface MerchantData {
   businessName: string;
   email: string;
@@ -24,7 +25,7 @@ export default function Settings() {
   const [user, setUser] = useState<User | null>(null);
   const [merchantData, setMerchantData] = useState<MerchantData | null>(null);
   const [stellarAddress, setStellarAddress] = useState<string>("");
-  const { address: walletAddress, isConnecting, connect: connectWalletAdapter, disconnect: disconnectWalletAdapter } = useWallet();
+  const [isConnecting, setIsConnecting] = useState<boolean>(false);
   const [monthlyUsage, setMonthlyUsage] = useState<number>(0);
   const [isSubscribed, setIsSubscribed] = useState<boolean>(false);
   const [freeTierLimit, setFreeTierLimit] = useState<number>(100000);
@@ -81,31 +82,39 @@ export default function Settings() {
     });
 
     return () => unsubscribe();
-  }, [walletAddress, user, merchantData]);
-
-  useEffect(() => {
-    const effectiveAddress = walletAddress || merchantData?.stellarPublicKey || "";
-    setStellarAddress(effectiveAddress);
-
-    if (user && walletAddress && walletAddress !== merchantData?.stellarPublicKey) {
-      const syncAddress = async () => {
-        try {
-          const userRef = doc(db, "merchants", user.uid);
-          await setDoc(userRef, { stellarPublicKey: walletAddress }, { merge: true });
-        } catch (error) {
-          console.error("Failed to sync wallet address to merchant profile:", error);
-        }
-      };
-      syncAddress();
-    }
-  }, [walletAddress, merchantData?.stellarPublicKey, user]);
+  }, []);
 
   const connectWallet = async () => {
-    await connectWalletAdapter('stellar-wallets-kit');
+    setIsConnecting(true);
+    try {
+      const hasFreighter = await isConnected();
+      if (!hasFreighter) {
+        alert("Freighter is not installed! Please install the browser extension.");
+        setIsConnecting(false);
+        return;
+      }
+
+      const access = await requestAccess();
+      if (access.error) {
+        console.error("User denied access");
+        setIsConnecting(false);
+        return;
+      }
+
+      const publicKey = access.address;
+      setStellarAddress(publicKey);
+
+      if (user) {
+        const userRef = doc(db, "merchants", user.uid);
+        await setDoc(userRef, { stellarPublicKey: publicKey }, { merge: true });
+      }
+    } catch (error) {
+      console.error("Error connecting wallet:", error);
+    }
+    setIsConnecting(false);
   };
 
   const disconnectWallet = async () => {
-    await disconnectWalletAdapter();
     setStellarAddress("");
     if (user) {
       const userRef = doc(db, "merchants", user.uid);
@@ -194,7 +203,7 @@ export default function Settings() {
             {stellarAddress ? (
               <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "rgba(74,222,128,.08)", border: "1px solid rgba(74,222,128,.2)", borderRadius: 8, marginBottom: 18, fontSize: 13, color: "#86efac" }}>
-                  ✓ Wallet connected
+                  ✓ Freighter wallet connected
                 </div>
                 <div style={{ marginBottom: 20 }}>
                   <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#6b7280", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Stellar Address</div>
@@ -211,7 +220,7 @@ export default function Settings() {
                 <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "rgba(250,204,21,.08)", border: "1px solid rgba(250,204,21,.2)", borderRadius: 8, marginBottom: 18, fontSize: 13, color: "#fde047" }}>
                   ⚠ No wallet connected
                 </div>
-                <p style={{ fontSize: 13, color: "#9ca3af", marginBottom: 20 }}>Connect your wallet to interact with the Stellar network from desktop, mobile, and web.</p>
+                <p style={{ fontSize: 13, color: "#9ca3af", marginBottom: 20 }}>Connect your Freighter wallet to interact with the Stellar network.</p>
                 <div style={{ marginTop: "auto" }}>
                   <button
                     type="button"
@@ -219,7 +228,7 @@ export default function Settings() {
                     disabled={isConnecting}
                     style={{ background: isConnecting ? "transparent" : "linear-gradient(135deg,#7c3aed,#4f46e5)", color: "#fff", border: isConnecting ? "1px solid rgba(255,255,255,0.1)" : "none", borderRadius: 7, padding: "10px 16px", fontSize: 13, cursor: isConnecting ? "not-allowed" : "pointer", fontFamily: "'Nunito',sans-serif", fontWeight: 700, width: isConnecting ? "100%" : "auto" }}
                   >
-                    {isConnecting ? <LoadingBadge text="Connecting..." variant="secure" /> : "Connect Wallet"}
+                    {isConnecting ? <LoadingBadge text="Connecting..." variant="secure" /> : "Connect Freighter"}
                   </button>
                 </div>
               </div>

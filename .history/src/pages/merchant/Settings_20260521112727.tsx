@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { isConnected, requestAccess } from '@stellar/freighter-api';
 import { auth, db } from '../../config/firebase';
 import { onAuthStateChanged, type User } from 'firebase/auth';
-import { useWallet } from '../../contexts/WalletContext';
 import { doc, getDoc, setDoc, updateDoc, collection, getDocs } from 'firebase/firestore';
 import MonthlyUsageCard from "../../components/dashboard/MonthlyUsageCard";
 import InvoiceDashboard from './InvoiceDashboard';
@@ -194,7 +194,7 @@ export default function Settings() {
             {stellarAddress ? (
               <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "rgba(74,222,128,.08)", border: "1px solid rgba(74,222,128,.2)", borderRadius: 8, marginBottom: 18, fontSize: 13, color: "#86efac" }}>
-                  ✓ Wallet connected
+                  ✓ Freighter wallet connected
                 </div>
                 <div style={{ marginBottom: 20 }}>
                   <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#6b7280", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Stellar Address</div>
