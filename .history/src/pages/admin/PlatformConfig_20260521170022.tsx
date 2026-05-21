@@ -382,27 +382,6 @@ export default function PlatformConfig() {
                 }}
               />
             </div>
-
-            <div>
-              <label style={{ display: "block", fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>
-                PDAX Anchor Public Key
-              </label>
-              <input
-                type="text"
-                disabled={!isNetworkConfigUnlocked}
-                value={config.pdaxAnchorAddress}
-                onChange={(e) => handleConfigChange("pdaxAnchorAddress", e.target.value)}
-                style={{
-                  width: "100%",
-                  background: isNetworkConfigUnlocked ? "rgba(255,255,255,.04)" : "rgba(0,0,0,.2)",
-                  border: "1px solid rgba(255,255,255,.08)",
-                  borderRadius: 8, padding: "11px 14px",
-                  color: isNetworkConfigUnlocked ? "#fff" : "#9ca3af",
-                  fontSize: 13, outline: "none", boxSizing: "border-box",
-                  cursor: isNetworkConfigUnlocked ? "text" : "not-allowed"
-                }}
-              />
-            </div>
           </div>
         </div>
       </div>

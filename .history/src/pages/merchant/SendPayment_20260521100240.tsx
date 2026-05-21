@@ -1,9 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { Scanner } from "@yudiel/react-qr-scanner";
 import { Horizon, TransactionBuilder, Networks, Operation, Asset, Memo } from "@stellar/stellar-sdk";
-import { useWallet } from "../../contexts/WalletContext";
-import { useNetwork } from "../../contexts/NetworkContext";
-import { invokeSorobanContract } from "../../services/soroban";
+import { signTransaction } from "@stellar/freighter-api";
 import { auth, db } from "../../config/firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, setDoc, collection, getDocs } from "firebase/firestore";
@@ -68,22 +66,11 @@ export default function SendPayment() {
     const [realTimeRate, setRealTimeRate] = useState(1);
     const [usdToPhpRate, setUsdToPhpRate] = useState(56);
 
-    // Tracks which field the user typed in last so the math flows correctly
-    const [lastUpdatedField, setLastUpdatedField] = useState<"FIAT" | "CRYPTO">("FIAT");
-
     const [monthlyUsage, setMonthlyUsage] = useState(0);
     const [isSubscribed, setIsSubscribed] = useState(false);
 
-    const [useContractPayment, setUseContractPayment] = useState(false);
-    const [contractId, setContractId] = useState("");
-    const [contractFunctionName, setContractFunctionName] = useState("pay");
-    const [contractArgs, setContractArgs] = useState("destination,amount,token");
-
     const [isLoading, setIsLoading] = useState(true);
     const [loadingMsg, setLoadingMsg] = useState("Initializing dashboard...");
-
-    const { signTx } = useWallet();
-    const { networkConfig } = useNetwork();
 
     useEffect(() => {
         const initSystem = async () => {
@@ -170,7 +157,6 @@ export default function SendPayment() {
         setMonthlyUsage(currentMonthVolume);
     };
 
-    // Rate Fetching Logic (Refined for better stability)
     useEffect(() => {
         let isMounted = true;
         const fetchRate = async () => {
@@ -192,53 +178,25 @@ export default function SendPayment() {
 
                 setRealTimeRate(rate);
 
-                // Auto-sync the inputs when the currency dropdown changes
-                if (lastUpdatedField === "FIAT" && amountInFiat) {
-                    const cryptoDecimals = token === 'XLM' ? 7 : 2;
-                    setAmount((parseFloat(amountInFiat) / rate).toFixed(cryptoDecimals));
-                } else if (lastUpdatedField === "CRYPTO" && amount) {
-                    setAmountInFiat((parseFloat(amount) * rate).toFixed(2));
+                const parsedFiat = parseFloat(amountInFiat);
+                if (!isNaN(parsedFiat)) {
+                    setAmount((parsedFiat / rate).toFixed(2));
                 }
             } catch (e) {
                 console.error(e);
             }
         };
         fetchRate();
+        return () => { isMounted = false; };
+    }, [amountInFiat, token, fiatCurrency]);
 
-        // Auto-refresh the rate every 30 seconds
-        const interval = setInterval(fetchRate, 30000);
-        return () => {
-            isMounted = false;
-            clearInterval(interval);
-        };
-    }, [token, fiatCurrency]);
+    const handleCryptoAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const newCryptoAmount = e.target.value;
+        setAmount(newCryptoAmount);
 
-    // Handle Fiat typing gracefully
-    const handleFiatChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const val = e.target.value;
-        setAmountInFiat(val);
-        setLastUpdatedField("FIAT");
-
-        const parsed = parseFloat(val);
-        if (!isNaN(parsed) && parsed > 0) {
-            // XLM needs high precision, USDC/PHPC are fine with 2
-            const cryptoDecimals = token === 'XLM' ? 7 : 2;
-            setAmount((parsed / realTimeRate).toFixed(cryptoDecimals));
-        } else {
-            setAmount("");
-        }
-    };
-
-    // Handle Crypto typing gracefully
-    const handleCryptoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const val = e.target.value;
-        setAmount(val);
-        setLastUpdatedField("CRYPTO");
-
-        const parsed = parseFloat(val);
-        if (!isNaN(parsed) && parsed > 0) {
-            // Fiat always defaults to 2 decimals
-            setAmountInFiat((parsed * realTimeRate).toFixed(2));
+        const parsedCrypto = parseFloat(newCryptoAmount);
+        if (!isNaN(parsedCrypto)) {
+            setAmountInFiat((parsedCrypto * realTimeRate).toFixed(2));
         } else {
             setAmountInFiat("");
         }
@@ -252,44 +210,17 @@ export default function SendPayment() {
     const willExceedLimit = !isSubscribed && projectedUsage > sysConfig.freeTierCap;
 
     const handleScan = async (text: string) => {
+        const address = text.includes("destination=") ? text.match(/destination=([A-Z0-9]+)/)?.[1] || text : text;
+        setDestination(address);
         setIsScanning(false);
-
-        let parsedDest = text;
-        let parsedAmount = "";
-        let parsedToken = token;
-
-        if (text.includes("destination=")) {
-            const destMatch = text.match(/destination=([A-Z0-9]+)/);
-            if (destMatch) parsedDest = destMatch[1];
-
-            const amtMatch = text.match(/amount=([0-9.]+)/);
-            if (amtMatch) parsedAmount = amtMatch[1];
-
-            const tokenMatch = text.match(/token=([A-Z]+)/);
-            if (tokenMatch) parsedToken = tokenMatch[1] as any;
-        }
-
-        setDestination(parsedDest);
-        if (parsedAmount) {
-            setAmount(parsedAmount);
-            setAmountInFiat((parseFloat(parsedAmount) * realTimeRate).toFixed(2));
-        }
-        setToken(parsedToken as any);
 
         if (willExceedLimit) {
             alert(`⚠️ This transaction exceeds your free tier limit (${sysConfig.freeTierCap.toLocaleString()} PHP). Please subscribe to continue.`);
             return;
         }
 
-        const finalAmount = parsedAmount || amount;
-
-        if (!finalAmount) {
-            alert("Scan successful! Please enter the amount you wish to send.");
-            return;
-        }
-
-        if (confirm(`Do you want to send ${finalAmount} ${parsedToken} to ${parsedDest.substring(0, 8)}...?`)) {
-            await executePayment(parsedDest, finalAmount, parsedToken);
+        if (confirm(`Do you want to send ${amount} ${token} to ${address.substring(0, 8)}...?`)) {
+            await executePayment(address);
         }
     };
 
@@ -299,11 +230,7 @@ export default function SendPayment() {
         hash: string = "",
         netSpeed: string = "0.00",
         totalSpeed: string = "0.00",
-        errorMessage: string = "",
-        usingContract: boolean = false,
-        contractIdValue: string = "",
-        contractFunctionValue: string = "",
-        contractArgsValue: string = ""
+        errorMessage: string = ""
     ) => {
         if (!auth.currentUser) return;
         try {
@@ -317,10 +244,6 @@ export default function SendPayment() {
                 fiatCurrency: fiatCurrency,
                 token: token,
                 description: description,
-                paymentMechanism: usingContract ? "soroban" : "native",
-                contractId: usingContract ? contractIdValue : "",
-                contractFunctionName: usingContract ? contractFunctionValue : "",
-                contractArgs: usingContract ? contractArgsValue : "",
                 txHash: hash,
                 status: status === "success" ? "COMPLETED" : status,
                 errorMessage: errorMessage,
@@ -333,13 +256,10 @@ export default function SendPayment() {
         }
     };
 
-    const executePayment = async (scannedDest?: string, scannedAmount?: string, scannedToken?: string) => {
+    const executePayment = async (scannedDest?: string) => {
         const finalDest = scannedDest || destination;
-        const finalAmount = scannedAmount || amount;
-        const finalToken = scannedToken || token;
-
         if (!merchantAddress) return alert("Please connect your wallet in Settings.");
-        if (!finalDest || !finalAmount) return alert("Please provide a destination and an amount.");
+        if (!finalDest || !amount) return alert("Please provide a destination and an amount.");
         if (willExceedLimit) return alert(`⚠️ Usage limit reached. Cannot send payment.`);
 
         const startTime = Date.now();
@@ -353,151 +273,104 @@ export default function SendPayment() {
         setSpeeds({ network: "0.00", total: "0.00" });
 
         try {
-            let hash = "";
-            let netSpeed = "0.00";
-            let totalSpeed = "0.00";
+            const server = new Horizon.Server(sysConfig.horizonUrl);
+            const sourceAccount = await server.loadAccount(merchantAddress);
 
-            if (useContractPayment) {
-                if (!contractId) return alert("Please enter the Soroban contract ID.");
-                if (!contractFunctionName) return alert("Please enter the Soroban contract function name.");
-                if (!networkConfig?.sorobanRpcUrl) return alert("Soroban RPC URL is not configured.");
+            let asset = Asset.native();
+            if (token === "PHPC") {
+                asset = new Asset("PHPC", sysConfig.phpcIssuer);
+            } else if (token === "USDC") {
+                asset = new Asset("USDC", sysConfig.usdcIssuer);
+            }
 
-                const parsedArgs = contractArgs
-                    .split(",")
-                    .map((arg) => arg.trim())
-                    .filter((arg) => arg.length > 0)
-                    .map((arg) => {
-                        if (/^-?\d+\.\d+$/.test(arg)) return Number(arg);
-                        if (/^-?\d+$/.test(arg)) return Number(arg);
-                        if (arg.toLowerCase() === "true") return true;
-                        if (arg.toLowerCase() === "false") return false;
-                        return arg;
-                    });
+            const transaction = new TransactionBuilder(sourceAccount, {
+                fee: "1000",
+                networkPassphrase: sysConfig.networkPassphrase,
+            })
+                .addOperation(Operation.payment({
+                    destination: finalDest,
+                    asset: asset,
+                    amount: amount.toString(),
+                }))
+                .addMemo(Memo.text(memoString))
+                .setTimeout(30)
+                .build();
 
-                const response = await invokeSorobanContract({
-                    sourcePublicKey: merchantAddress,
-                    contractId,
-                    functionName: contractFunctionName,
-                    functionArgs: parsedArgs,
-                    horizonUrl: sysConfig.horizonUrl,
-                    sorobanRpcUrl: networkConfig.sorobanRpcUrl,
-                    networkPassphrase: sysConfig.networkPassphrase,
-                    walletSign: signTx,
-                    fee: "100",
-                    timeout: 300,
-                });
+            const signResponse = await signTransaction(transaction.toXDR(), {
+                network: sysConfig.networkPassphrase === Networks.TESTNET ? "TESTNET" : "PUBLIC",
+                networkPassphrase: sysConfig.networkPassphrase,
+            });
 
-                hash = response.hash || response.id || "";
-                totalSpeed = ((Date.now() - startTime) / 1000).toFixed(2);
-                netSpeed = totalSpeed;
-                setSpeeds({ network: netSpeed, total: totalSpeed });
-                setTxHash(hash);
+            if (!signResponse || signResponse.error) {
                 paymentLogged = true;
-                await savePaymentToFirestore(paymentId, "success", hash, netSpeed, totalSpeed, "", true, contractId, contractFunctionName, contractArgs);
-            } else {
-                const server = new Horizon.Server(sysConfig.horizonUrl);
-                const sourceAccount = await server.loadAccount(merchantAddress);
+                const totalSpeed = ((Date.now() - startTime) / 1000).toFixed(2);
+                await savePaymentToFirestore(paymentId, "cancelled", "", "0.00", totalSpeed, "Transaction signing cancelled.");
+                throw new Error("Transaction signing cancelled.");
+            }
 
-                let asset = Asset.native();
-                if (finalToken === "PHPC") {
-                    asset = new Asset("PHPC", sysConfig.phpcIssuer);
-                } else if (finalToken === "USDC") {
-                    asset = new Asset("USDC", sysConfig.usdcIssuer);
+            const signedXdrString = typeof signResponse === "string" ? signResponse :
+                (signResponse.signedTxXdr || Object.values(signResponse)[0] as string);
+
+            setLoadingMsg("Submitting to the Stellar Network...");
+
+            const txBody = new URLSearchParams();
+            txBody.append("tx", signedXdrString);
+
+            const submitResponse = await fetch(`${sysConfig.horizonUrl}/transactions`, {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: txBody.toString()
+            });
+
+            const responseData = await submitResponse.json();
+            const receiveTime = Date.now();
+
+            if (!submitResponse.ok) {
+                let exactError = "Unknown Network Error";
+                if (responseData.extras && responseData.extras.result_codes) {
+                    const codes = responseData.extras.result_codes;
+                    exactError = codes.operations ? codes.operations.join(", ") : codes.transaction;
                 }
-
-                const transaction = new TransactionBuilder(sourceAccount, {
-                    fee: "1000",
-                    networkPassphrase: sysConfig.networkPassphrase,
-                })
-                    .addOperation(Operation.payment({
-                        destination: finalDest,
-                        asset: asset,
-                        amount: finalAmount.toString(),
-                    }))
-                    .addMemo(Memo.text(memoString))
-                    .setTimeout(30)
-                    .build();
-
-                let signedXdrString = "";
-                try {
-                    signedXdrString = await signTx(transaction.toXDR(), sysConfig.networkPassphrase);
-                } catch (signError: any) {
-                    paymentLogged = true;
-                    totalSpeed = ((Date.now() - startTime) / 1000).toFixed(2);
-                    const errorMsg = signError.message || "Transaction signing cancelled.";
-                    await savePaymentToFirestore(paymentId, "cancelled", "", "0.00", totalSpeed, errorMsg, false, "", "", "");
-                    throw new Error(errorMsg);
-                }
-
-                setLoadingMsg("Submitting to the Stellar Network...");
-
-                const txBody = new URLSearchParams();
-                txBody.append("tx", signedXdrString);
-
-                const submitResponse = await fetch(`${sysConfig.horizonUrl}/transactions`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                    body: txBody.toString()
-                });
-
-                const responseData = await submitResponse.json();
-                const receiveTime = Date.now();
-
-                if (!submitResponse.ok) {
-                    let exactError = "Unknown Network Error";
-                    if (responseData.extras && responseData.extras.result_codes) {
-                        const codes = responseData.extras.result_codes;
-                        exactError = codes.operations ? codes.operations.join(", ") : codes.transaction;
-                    }
-
-                    paymentLogged = true;
-                    totalSpeed = ((Date.now() - startTime) / 1000).toFixed(2);
-                    await savePaymentToFirestore(paymentId, "failed", "", "0.00", totalSpeed, exactError, false, "", "", "");
-
-                    if (exactError.includes("op_no_destination")) throw new Error("Failed: The receiving wallet does not exist yet. It must be funded with 1 XLM.");
-                    else if (exactError.includes("op_src_no_trust")) throw new Error(`Failed: YOUR wallet does not trust ${finalToken}.`);
-                    else if (exactError.includes("op_no_trust")) throw new Error(`Failed: The RECEIVING wallet does not trust ${finalToken}.`);
-                    else if (exactError.includes("op_underfunded")) throw new Error("Failed: Your wallet does not have enough funds.");
-                    else throw new Error(`Blockchain Rejected Transaction. Code: ${exactError}`);
-                }
-
-                totalSpeed = ((receiveTime - startTime) / 1000).toFixed(2);
-                netSpeed = totalSpeed;
-                if (responseData.created_at) {
-                    const ledgerTime = new Date(responseData.created_at).getTime();
-                    netSpeed = Math.max(0.1, Math.abs(receiveTime - ledgerTime) / 1000).toFixed(2);
-                }
-
-                setSpeeds({ network: netSpeed, total: totalSpeed });
-                const hashResponse = responseData.hash;
-                hash = hashResponse;
-
-                setLoadingMsg("Saving Receipt...");
 
                 paymentLogged = true;
-                await savePaymentToFirestore(paymentId, "success", hash, netSpeed, totalSpeed, "", false, "", "", "");
+                const totalSpeed = ((Date.now() - startTime) / 1000).toFixed(2);
+                await savePaymentToFirestore(paymentId, "failed", "", "0.00", totalSpeed, exactError);
 
-                setTxHash(hash);
+                if (exactError.includes("op_no_destination")) throw new Error("Failed: The receiving wallet does not exist yet. It must be funded with 1 XLM.");
+                else if (exactError.includes("op_src_no_trust")) throw new Error(`Failed: YOUR wallet does not trust ${token}.`);
+                else if (exactError.includes("op_no_trust")) throw new Error(`Failed: The RECEIVING wallet does not trust ${token}.`);
+                else if (exactError.includes("op_underfunded")) throw new Error("Failed: Your wallet does not have enough funds.");
+                else throw new Error(`Blockchain Rejected Transaction. Code: ${exactError}`);
+            }
 
-                if (auth.currentUser) {
-                    await fetchUsage(auth.currentUser.uid);
-                }
+            const totalSpeed = ((receiveTime - startTime) / 1000).toFixed(2);
+            let netSpeed = totalSpeed;
+            if (responseData.created_at) {
+                const ledgerTime = new Date(responseData.created_at).getTime();
+                netSpeed = Math.max(0.1, Math.abs(receiveTime - ledgerTime) / 1000).toFixed(2);
+            }
+
+            setSpeeds({ network: netSpeed, total: totalSpeed });
+            const hash = responseData.hash;
+
+            setLoadingMsg("Saving Receipt...");
+
+            paymentLogged = true;
+            await savePaymentToFirestore(paymentId, "success", hash, netSpeed, totalSpeed);
+
+            setTxHash(hash);
+
+            if (auth.currentUser) {
+                await fetchUsage(auth.currentUser.uid);
             }
 
         } catch (error: any) {
             console.error(error);
-            const errorMsg = error.message || "Unknown error occurred.";
-
-            const isCancelled = errorMsg.toLowerCase().includes("cancel") || errorMsg.toLowerCase().includes("reject") || errorMsg.toLowerCase().includes("decline");
-
             if (!paymentLogged) {
                 const totalSpeed = ((Date.now() - startTime) / 1000).toFixed(2);
-                await savePaymentToFirestore(paymentId, isCancelled ? "cancelled" : "failed", "", "0.00", totalSpeed, errorMsg, useContractPayment, contractId, contractFunctionName, contractArgs);
+                await savePaymentToFirestore(paymentId, "failed", "", "0.00", totalSpeed, error.message || "Unknown error occurred.");
             }
-
-            if (!isCancelled) {
-                alert(errorMsg || "Payment Failed.");
-            }
+            alert(error.message || "Payment Failed.");
         } finally {
             setIsLoading(false);
         }
@@ -568,32 +441,20 @@ export default function SendPayment() {
                         <input value={destination} onChange={e => setDestination(e.target.value)} placeholder="G..." style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: "#fff", fontSize: 13, fontFamily: "'DM Mono',monospace", outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} />
                     </div>
 
-                    <motion.button
-                        type="button"
-                        whileHover={{ scale: 1.01 }}
-                        whileTap={{ scale: 0.98 }}
-                        onClick={() => setIsScanning(!isScanning)}
-                        style={{ background: "rgba(96,165,250,.05)", color: "#60a5fa", border: "1px solid rgba(96,165,250,.3)", borderRadius: 12, padding: "12px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "'Nunito',sans-serif", width: "100%", marginBottom: 28, transition: "background 0.2s" }}
-                    >
+                    <motion.button type="button" whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }} onClick={() => setIsScanning(!isScanning)} style={{ background: "rgba(96,165,250,.05)", color: "#60a5fa", border: "1px solid rgba(96,165,250,.3)", borderRadius: 12, padding: "12px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "'Nunito',sans-serif", width: "100%", marginBottom: 28, transition: "background 0.2s" }}>
                         {isScanning ? "Cancel Camera Scan" : "📷 Scan Supplier QR Code"}
                     </motion.button>
 
                     <div className="pm-dual-fields">
                         <div>
-                            <div style={{ display: "flex", justifyItems: "center", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                                 <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 700 }}>Base</div>
                                 <select value={fiatCurrency} onChange={(e) => setFiatCurrency(e.target.value as "PHP" | "USD")} style={{ background: "transparent", color: "#a78bfa", border: "none", fontSize: 12, outline: "none", cursor: "pointer", fontWeight: "bold" }}>
                                     <option value="PHP" style={{ color: "#000" }}>PHP (₱)</option>
                                     <option value="USD" style={{ color: "#000" }}>USD ($)</option>
                                 </select>
                             </div>
-                            <input
-                                type="number"
-                                value={amountInFiat}
-                                onChange={handleFiatChange}
-                                placeholder="0.00"
-                                style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: "#fff", fontSize: 16, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }}
-                            />
+                            <input type="number" value={amountInFiat} onChange={e => setAmountInFiat(e.target.value)} placeholder="0.00" style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: "#fff", fontSize: 16, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} />
                         </div>
 
                         <motion.div animate={{ opacity: [0.4, 1, 0.4] }} transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }} style={{ paddingBottom: 14, color: isSubscribed ? "#f59e0b" : "#6b7280", fontSize: 20, textAlign: "center" }}>
@@ -609,42 +470,9 @@ export default function SendPayment() {
                                     <option value="XLM" style={{ color: "#000" }}>XLM</option>
                                 </select>
                             </div>
-                            <input
-                                type="number"
-                                value={amount}
-                                onChange={handleCryptoChange}
-                                placeholder={token === 'XLM' ? "0.0000000" : "0.00"}
-                                style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: isSubscribed ? "#fcd34d" : "#a78bfa", fontSize: 16, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }}
-                            />
+                            <input type="number" value={amount} onChange={handleCryptoAmountChange} placeholder="0.00" style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: isSubscribed ? "#fcd34d" : "#a78bfa", fontSize: 16, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} />
                         </div>
                     </div>
-
-                    <div style={{ marginBottom: 20 }}>
-                        <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8, fontWeight: 700 }}>Payment Mode</div>
-                        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                            <button type="button" onClick={() => setUseContractPayment(false)} style={{ flex: 1, padding: "11px 14px", borderRadius: 12, border: useContractPayment ? "1px solid rgba(156,163,175,.3)" : "1px solid rgba(56,189,248,.8)", background: useContractPayment ? "rgba(255,255,255,0.04)" : "rgba(56,189,248,0.2)", color: "#fff", cursor: "pointer", fontWeight: 700 }}>Standard Payment</button>
-                            <button type="button" onClick={() => setUseContractPayment(true)} style={{ flex: 1, padding: "11px 14px", borderRadius: 12, border: useContractPayment ? "1px solid rgba(34,197,94,.8)" : "1px solid rgba(156,163,175,.3)", background: useContractPayment ? "rgba(34,197,94,0.2)" : "rgba(255,255,255,0.04)", color: "#fff", cursor: "pointer", fontWeight: 700 }}>Soroban Contract</button>
-                        </div>
-                    </div>
-
-                    {useContractPayment && (
-                        <div style={{ marginBottom: 24 }}>
-                            <div style={{ display: "grid", gap: 14 }}>
-                                <div>
-                                    <label style={{ color: "#9ca3af", fontSize: 12, marginBottom: 6, display: "block" }}>Soroban Contract ID</label>
-                                    <input value={contractId} onChange={e => setContractId(e.target.value)} placeholder="CA..." style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "12px 14px", color: "#fff", fontSize: 14, outline: "none", boxSizing: "border-box" }} />
-                                </div>
-                                <div>
-                                    <label style={{ color: "#9ca3af", fontSize: 12, marginBottom: 6, display: "block" }}>Contract Function</label>
-                                    <input value={contractFunctionName} onChange={e => setContractFunctionName(e.target.value)} placeholder="Function name" style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "12px 14px", color: "#fff", fontSize: 14, outline: "none", boxSizing: "border-box" }} />
-                                </div>
-                                <div>
-                                    <label style={{ color: "#9ca3af", fontSize: 12, marginBottom: 6, display: "block" }}>Contract Args (comma separated)</label>
-                                    <input value={contractArgs} onChange={e => setContractArgs(e.target.value)} placeholder="destination,amount,token" style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "12px 14px", color: "#fff", fontSize: 14, outline: "none", boxSizing: "border-box" }} />
-                                </div>
-                            </div>
-                        </div>
-                    )}
 
                     <div style={{ marginBottom: 32 }}>
                         <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8, fontWeight: 700 }}>Memo / Reference Note</div>
@@ -749,3 +577,4 @@ export default function SendPayment() {
         </div>
     );
 }
+

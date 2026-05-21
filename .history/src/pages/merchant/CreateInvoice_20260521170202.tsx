@@ -10,6 +10,8 @@ import MonthlyUsageCard from "../../components/dashboard/MonthlyUsageCard";
 import { useNetwork } from "../../contexts/NetworkContext";
 import { useWallet } from "../../contexts/WalletContext";
 import { invokeSorobanContract } from "../../services/soroban";
+import { useWallet } from "../../contexts/WalletContext";
+import { invokeSorobanContract } from "../../services/soroban";
 
 // Hardcoded Testnet fallback issuer targets to match staging architecture configurations
 const FALLBACK_ISSUER = "GDZRE7N6PHB6CCM3VBRB5V7SDRB6CS4U6MTUL6Q6OMJEXHUTVPHPC001"; // Testnet Issuer

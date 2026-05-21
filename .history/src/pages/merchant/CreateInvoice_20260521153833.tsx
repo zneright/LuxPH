@@ -8,8 +8,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { LoadingOverlay } from "../../components/ui/LoadingOverlay";
 import MonthlyUsageCard from "../../components/dashboard/MonthlyUsageCard";
 import { useNetwork } from "../../contexts/NetworkContext";
-import { useWallet } from "../../contexts/WalletContext";
-import { invokeSorobanContract } from "../../services/soroban";
 
 // Hardcoded Testnet fallback issuer targets to match staging architecture configurations
 const FALLBACK_ISSUER = "GDZRE7N6PHB6CCM3VBRB5V7SDRB6CS4U6MTUL6Q6OMJEXHUTVPHPC001"; // Testnet Issuer
@@ -50,12 +48,6 @@ export default function CreateInvoice() {
   const [customerName, setCustomerName] = useState("");
   const [memo, setMemo] = useState("");
 
-  const [useContractInvoice, setUseContractInvoice] = useState(false);
-  const [contractId, setContractId] = useState("");
-  const [contractFunctionName, setContractFunctionName] = useState("record_invoice");
-  const [contractArgs, setContractArgs] = useState("customerName,amount,token,memo");
-  const [contingencyPercentage, setContingencyPercentage] = useState(0);
-
   const [merchantAddress, setMerchantAddress] = useState<string>("");
   const [monthlyUsage, setMonthlyUsage] = useState(0);
   const [isSubscribed, setIsSubscribed] = useState(false);
@@ -76,8 +68,6 @@ export default function CreateInvoice() {
   const [paymentStartTime, setPaymentStartTime] = useState<number | null>(null);
   const streamCloserRef = useRef<(() => void) | null>(null);
 
-  const { signTx } = useWallet();
-
   useEffect(() => {
     const initSystem = async () => {
       try {
@@ -88,7 +78,6 @@ export default function CreateInvoice() {
               const data = mDoc.data();
               setIsSubscribed(data?.isSubscribed === true);
               if (data?.stellarPublicKey) setMerchantAddress(data.stellarPublicKey);
-              if (data?.contingencyConfig?.percentage) setContingencyPercentage(Number(data.contingencyConfig.percentage));
             }
             setMemo(`INV${Math.floor(100000 + Math.random() * 900000)}`);
             await fetchUsage(currentUser.uid);
@@ -218,7 +207,6 @@ export default function CreateInvoice() {
   const saveInvoiceToFirestore = async (status: "success" | "failed" | "cancelled", txHash: string = "", netSpeed: string = "0.00", totalSpeed: string = "0.00") => {
     if (!auth.currentUser) return;
     try {
-      const contingencyAmount = contingencyPercentage > 0 ? ((parseFloat(amount || "0") * contingencyPercentage) / 100).toFixed(2) : "0.00";
       const invoiceRef = doc(db, `merchants/${auth.currentUser.uid}/invoices`, memo);
       await setDoc(invoiceRef, {
         type: "received",
@@ -231,12 +219,6 @@ export default function CreateInvoice() {
         customerName: customerName,
         txHash: txHash,
         status: status,
-        paymentMechanism: useContractInvoice ? "soroban" : "horizon",
-        contractId: useContractInvoice ? contractId : "",
-        contractFunctionName: useContractInvoice ? contractFunctionName : "",
-        contractArgs: useContractInvoice ? contractArgs : "",
-        contingencyPercentage: contingencyPercentage,
-        contingencyAmount: contingencyAmount,
         timestamp: new Date().toISOString(),
         processingTimeSeconds: parseFloat(netSpeed),
         networkSpeedSeconds: parseFloat(netSpeed),
@@ -258,51 +240,6 @@ export default function CreateInvoice() {
       alert(`⚠️ This transaction exceeds your free tier limit (${sysConfig.freeTierCap.toLocaleString()} PHP). Please subscribe to continue.`);
       return;
     }
-
-    if (useContractInvoice) {
-      if (!contractId) {
-        return alert("Please provide the Soroban contract ID.");
-      }
-      if (!contractFunctionName) {
-        return alert("Please provide the contract function name.");
-      }
-      if (!networkConfig?.sorobanRpcUrl) {
-        return alert("Soroban RPC URL is not configured.");
-      }
-
-      const parsedArgs = contractArgs
-        .split(",")
-        .map((arg) => arg.trim())
-        .filter((arg) => arg.length > 0)
-        .map((arg) => {
-          if (/^-?\d+\.\d+$/.test(arg)) return Number(arg);
-          if (/^-?\d+$/.test(arg)) return Number(arg);
-          if (arg.toLowerCase() === "true") return true;
-          if (arg.toLowerCase() === "false") return false;
-          return arg;
-        });
-
-      try {
-        setLoadingMsg("Submitting invoice to Soroban contract...");
-        setIsLoading(true);
-        await invokeSorobanContract({
-          sourcePublicKey: merchantAddress,
-          contractId,
-          functionName: contractFunctionName,
-          functionArgs: parsedArgs,
-          horizonUrl: networkConfig.horizonUrl,
-          sorobanRpcUrl: networkConfig.sorobanRpcUrl,
-          networkPassphrase: networkConfig.networkPassphrase,
-          walletSign: signTx,
-          fee: "100",
-          timeout: 300,
-        });
-      } catch (contractError: any) {
-        setIsLoading(false);
-        return alert(`Soroban invoice registration failed: ${contractError.message || contractError}`);
-      }
-    }
-
     setPaymentStartTime(Date.now());
     startListeningForPayment();
   };
@@ -486,40 +423,6 @@ export default function CreateInvoice() {
               style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: "#fff", fontSize: 14, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }}
             />
           </div>
-
-          <div style={{ marginBottom: 24 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-              <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 700 }}>Invoice Mode</div>
-              <button type="button" onClick={() => setUseContractInvoice(!useContractInvoice)} style={{ background: useContractInvoice ? "rgba(16,185,129,0.16)" : "rgba(59,130,246,0.12)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 10, color: "#fff", padding: "8px 14px", fontSize: 12, cursor: "pointer" }}>
-                {useContractInvoice ? "Contract Invoice" : "Standard Invoice"}
-              </button>
-            </div>
-            {useContractInvoice && (
-              <div style={{ display: "grid", gap: 14 }}>
-                <div>
-                  <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Soroban Contract ID</div>
-                  <input value={contractId} onChange={(e) => setContractId(e.target.value)} placeholder="CA..." style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "12px 14px", color: "#fff", fontSize: 13, outline: "none" }} />
-                </div>
-                <div>
-                  <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Contract Function</div>
-                  <input value={contractFunctionName} onChange={(e) => setContractFunctionName(e.target.value)} placeholder="record_invoice" style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "12px 14px", color: "#fff", fontSize: 13, outline: "none" }} />
-                </div>
-                <div>
-                  <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Contract Args</div>
-                  <input value={contractArgs} onChange={(e) => setContractArgs(e.target.value)} placeholder="customerName,amount,token,memo" style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "12px 14px", color: "#fff", fontSize: 13, outline: "none" }} />
-                </div>
-              </div>
-            )}
-          </div>
-
-          {contingencyPercentage > 0 && (
-            <div style={{ marginBottom: 24, padding: "16px", borderRadius: 16, background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.15)" }}>
-              <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#10b981", textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 700, marginBottom: 8 }}>Contingency Reserve</div>
-              <div style={{ color: "#d1fae5", fontSize: 13, lineHeight: 1.6 }}>
-                This merchant has a contingency reserve of <strong>{contingencyPercentage}%</strong>. When you receive payment, the system will calculate the contingency amount and preserve it as a locked reserve.
-              </div>
-            </div>
-          )}
 
           {paymentStatus === "idle" ? (
             <motion.button

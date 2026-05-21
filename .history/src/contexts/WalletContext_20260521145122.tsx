@@ -27,6 +27,7 @@ class FreighterAdapter implements WalletAdapter {
     id = 'freighter';
     name = 'Freighter';
 
+    // Safe SSR check
     isAvailable(): boolean {
         if (typeof window === 'undefined') return false;
         return !!(window as any).freighter;
@@ -35,6 +36,7 @@ class FreighterAdapter implements WalletAdapter {
     async connect(): Promise<string> {
         if (!this.isAvailable()) throw new Error('Freighter is not installed.');
 
+        // Dynamic import strictly prevents SSR compile crashes
         const { requestAccess } = await import('@stellar/freighter-api');
         const access = await requestAccess();
 
@@ -48,9 +50,13 @@ class FreighterAdapter implements WalletAdapter {
 
     async signTransaction(xdr: string, networkPassphrase: string): Promise<string> {
         const { signTransaction } = await import('@stellar/freighter-api');
+
         const network = networkPassphrase.includes("Public") ? "PUBLIC" : "TESTNET";
 
-        const response = await signTransaction(xdr, { network, networkPassphrase });
+        const response = await signTransaction(xdr, {
+            network,
+            networkPassphrase,
+        });
 
         if (!response || response.error) {
             throw new Error(response.error || 'Transaction signing was rejected.');
@@ -68,22 +74,28 @@ class StellarWalletsKitAdapter implements WalletAdapter {
     private initialized = false;
 
     private initializeKit(network: StellarKitNetworks = StellarKitNetworks.TESTNET) {
-        if (typeof window === 'undefined') return;
+        if (typeof window === 'undefined') {
+            return;
+        }
 
+        // 🚨 GLOBAL CSS INJECTION: Forces the modal to act as a centered popup window 🚨
         if (!document.getElementById('swk-global-modal-fix')) {
             const style = document.createElement('style');
             style.id = 'swk-global-modal-fix';
             style.innerHTML = `
+                /* Lock the Web Component to the center of the screen */
                 stellar-wallets-modal {
                     position: fixed !important;
                     top: 50% !important;
                     left: 50% !important;
                     transform: translate(-50%, -50%) !important;
-                    z-index: 2147483647 !important; 
+                    z-index: 2147483647 !important; /* Max z-index to stay on top */
                     margin: 0 !important;
                     bottom: auto !important;
                     right: auto !important;
                 }
+                
+                /* Penetrate the Shadow DOM to fix the grey overlay background */
                 stellar-wallets-modal::part(overlay) {
                     position: fixed !important;
                     top: 0 !important;
@@ -98,13 +110,20 @@ class StellarWalletsKitAdapter implements WalletAdapter {
             document.head.appendChild(style);
         }
 
-        const modules = [new AlbedoModule(), new FreighterModule(), new LobstrModule()];
+        const modules = [
+            new AlbedoModule(),
+            new FreighterModule(),
+            new LobstrModule(),
+        ];
 
         if (!this.initialized) {
             StellarWalletsKit.init({
                 modules,
                 network,
-                authModal: { showInstallLabel: true, hideUnsupportedWallets: false },
+                authModal: {
+                    showInstallLabel: true,
+                    hideUnsupportedWallets: false,
+                },
             });
             this.initialized = true;
             return;
@@ -119,11 +138,14 @@ class StellarWalletsKitAdapter implements WalletAdapter {
 
     async connect(network: StellarKitNetworks = StellarKitNetworks.TESTNET): Promise<string> {
         this.initializeKit(network);
+
         const result = await StellarWalletsKit.authModal({ container: document.body });
 
+        // This ensures the promise correctly resolves back to your app when they select Albedo/Freighter
         if (!result || !result.address) {
             throw new Error('Wallet connection was cancelled or failed.');
         }
+
         return result.address;
     }
 
@@ -133,27 +155,17 @@ class StellarWalletsKitAdapter implements WalletAdapter {
     }
 
     async signTransaction(xdr: string, networkPassphrase: string): Promise<string> {
-        // 🚨 FIX: Wake up the Kit if the user refreshed the page and bypassed the Connect button!
-        const network = networkPassphrase.includes("Public") ? StellarKitNetworks.PUBLIC : StellarKitNetworks.TESTNET;
-        this.initializeKit(network);
+        const response = await StellarWalletsKit.signTransaction(xdr, {
+            networkPassphrase,
+        });
 
-        try {
-            const response = await StellarWalletsKit.signTransaction(xdr, { networkPassphrase });
-
-            if (!response) {
-                throw new Error('Transaction signing failed or was cancelled.');
-            }
-
-            return typeof response === 'string'
-                ? response
-                : (response as any).signedTxXdr || (response as any).signedTransaction || '';
-        } catch (error: any) {
-            // 🚨 FIX: Extract WalletConnect unformatted objects so it doesn't crash as [object Object]
-            if (error && typeof error === 'object' && !error.message) {
-                throw new Error(`Wallet Error: ${JSON.stringify(error)}`);
-            }
-            throw error;
+        if (!response) {
+            throw new Error('Transaction signing failed.');
         }
+
+        return typeof response === 'string'
+            ? response
+            : (response as any).signedTxXdr || (response as any).signedTransaction || '';
     }
 }
 
@@ -172,6 +184,7 @@ interface WalletContextType {
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined);
 
+// Register available wallet engines here
 const ADAPTERS: WalletAdapter[] = [
     new StellarWalletsKitAdapter(),
     new FreighterAdapter()
@@ -183,6 +196,7 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
     const [isConnecting, setIsConnecting] = useState(false);
     const [activeAdapterId, setActiveAdapterId] = useState<string | null>(null);
 
+    // Auto-reconnect session logic
     useEffect(() => {
         const savedAddress = localStorage.getItem('wallet_address');
         const savedAdapter = localStorage.getItem('wallet_adapter');
@@ -196,6 +210,7 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
         return ADAPTERS.find(a => a.id === activeAdapterId);
     };
 
+    // Defaults to 'freighter' if no string is provided (e.g., if a click event object is accidentally passed)
     const connect = async (adapterInput?: string | any) => {
         const targetAdapterId = typeof adapterInput === 'string' ? adapterInput : 'freighter';
         const networkKit = networkConfig.networkPassphrase === Networks.PUBLIC ? StellarKitNetworks.PUBLIC : StellarKitNetworks.TESTNET;
@@ -214,10 +229,12 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
             setAddress(pubKey);
             setActiveAdapterId(targetAdapterId);
 
+            // Persist session
             localStorage.setItem('wallet_address', pubKey);
             localStorage.setItem('wallet_adapter', targetAdapterId);
         } catch (error: any) {
             console.error('Wallet connection failed:', error);
+            // Ignore cancelation errors if the user just closed the popup
             if (error.message && !error.message.includes('cancelled')) {
                 alert(error.message);
             }
@@ -238,7 +255,7 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
 
     const signTx = async (xdr: string, networkPassphrase: string): Promise<string> => {
         const adapter = getActiveAdapter();
-        if (!adapter || !address) throw new Error('No active wallet session. Please disconnect and reconnect your app.');
+        if (!adapter || !address) throw new Error('No active wallet session.');
 
         return await adapter.signTransaction(xdr, networkPassphrase);
     };

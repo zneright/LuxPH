@@ -2,8 +2,6 @@ import React, { useState, useEffect, useMemo } from "react";
 import { Scanner } from "@yudiel/react-qr-scanner";
 import { Horizon, TransactionBuilder, Networks, Operation, Asset, Memo } from "@stellar/stellar-sdk";
 import { useWallet } from "../../contexts/WalletContext";
-import { useNetwork } from "../../contexts/NetworkContext";
-import { invokeSorobanContract } from "../../services/soroban";
 import { auth, db } from "../../config/firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, setDoc, collection, getDocs } from "firebase/firestore";
@@ -68,22 +66,15 @@ export default function SendPayment() {
     const [realTimeRate, setRealTimeRate] = useState(1);
     const [usdToPhpRate, setUsdToPhpRate] = useState(56);
 
-    // Tracks which field the user typed in last so the math flows correctly
     const [lastUpdatedField, setLastUpdatedField] = useState<"FIAT" | "CRYPTO">("FIAT");
 
     const [monthlyUsage, setMonthlyUsage] = useState(0);
     const [isSubscribed, setIsSubscribed] = useState(false);
 
-    const [useContractPayment, setUseContractPayment] = useState(false);
-    const [contractId, setContractId] = useState("");
-    const [contractFunctionName, setContractFunctionName] = useState("pay");
-    const [contractArgs, setContractArgs] = useState("destination,amount,token");
-
     const [isLoading, setIsLoading] = useState(true);
     const [loadingMsg, setLoadingMsg] = useState("Initializing dashboard...");
 
     const { signTx } = useWallet();
-    const { networkConfig } = useNetwork();
 
     useEffect(() => {
         const initSystem = async () => {
@@ -170,7 +161,6 @@ export default function SendPayment() {
         setMonthlyUsage(currentMonthVolume);
     };
 
-    // Rate Fetching Logic (Refined for better stability)
     useEffect(() => {
         let isMounted = true;
         const fetchRate = async () => {
@@ -192,7 +182,6 @@ export default function SendPayment() {
 
                 setRealTimeRate(rate);
 
-                // Auto-sync the inputs when the currency dropdown changes
                 if (lastUpdatedField === "FIAT" && amountInFiat) {
                     const cryptoDecimals = token === 'XLM' ? 7 : 2;
                     setAmount((parseFloat(amountInFiat) / rate).toFixed(cryptoDecimals));
@@ -204,8 +193,6 @@ export default function SendPayment() {
             }
         };
         fetchRate();
-
-        // Auto-refresh the rate every 30 seconds
         const interval = setInterval(fetchRate, 30000);
         return () => {
             isMounted = false;
@@ -213,7 +200,6 @@ export default function SendPayment() {
         };
     }, [token, fiatCurrency]);
 
-    // Handle Fiat typing gracefully
     const handleFiatChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const val = e.target.value;
         setAmountInFiat(val);
@@ -221,7 +207,6 @@ export default function SendPayment() {
 
         const parsed = parseFloat(val);
         if (!isNaN(parsed) && parsed > 0) {
-            // XLM needs high precision, USDC/PHPC are fine with 2
             const cryptoDecimals = token === 'XLM' ? 7 : 2;
             setAmount((parsed / realTimeRate).toFixed(cryptoDecimals));
         } else {
@@ -229,7 +214,6 @@ export default function SendPayment() {
         }
     };
 
-    // Handle Crypto typing gracefully
     const handleCryptoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const val = e.target.value;
         setAmount(val);
@@ -237,7 +221,6 @@ export default function SendPayment() {
 
         const parsed = parseFloat(val);
         if (!isNaN(parsed) && parsed > 0) {
-            // Fiat always defaults to 2 decimals
             setAmountInFiat((parsed * realTimeRate).toFixed(2));
         } else {
             setAmountInFiat("");
@@ -299,11 +282,7 @@ export default function SendPayment() {
         hash: string = "",
         netSpeed: string = "0.00",
         totalSpeed: string = "0.00",
-        errorMessage: string = "",
-        usingContract: boolean = false,
-        contractIdValue: string = "",
-        contractFunctionValue: string = "",
-        contractArgsValue: string = ""
+        errorMessage: string = ""
     ) => {
         if (!auth.currentUser) return;
         try {
@@ -317,10 +296,6 @@ export default function SendPayment() {
                 fiatCurrency: fiatCurrency,
                 token: token,
                 description: description,
-                paymentMechanism: usingContract ? "soroban" : "native",
-                contractId: usingContract ? contractIdValue : "",
-                contractFunctionName: usingContract ? contractFunctionValue : "",
-                contractArgs: usingContract ? contractArgsValue : "",
                 txHash: hash,
                 status: status === "success" ? "COMPLETED" : status,
                 errorMessage: errorMessage,
@@ -353,135 +328,91 @@ export default function SendPayment() {
         setSpeeds({ network: "0.00", total: "0.00" });
 
         try {
-            let hash = "";
-            let netSpeed = "0.00";
-            let totalSpeed = "0.00";
+            const server = new Horizon.Server(sysConfig.horizonUrl);
+            const sourceAccount = await server.loadAccount(merchantAddress);
 
-            if (useContractPayment) {
-                if (!contractId) return alert("Please enter the Soroban contract ID.");
-                if (!contractFunctionName) return alert("Please enter the Soroban contract function name.");
-                if (!networkConfig?.sorobanRpcUrl) return alert("Soroban RPC URL is not configured.");
+            let asset = Asset.native();
+            if (finalToken === "PHPC") {
+                asset = new Asset("PHPC", sysConfig.phpcIssuer);
+            } else if (finalToken === "USDC") {
+                asset = new Asset("USDC", sysConfig.usdcIssuer);
+            }
 
-                const parsedArgs = contractArgs
-                    .split(",")
-                    .map((arg) => arg.trim())
-                    .filter((arg) => arg.length > 0)
-                    .map((arg) => {
-                        if (/^-?\d+\.\d+$/.test(arg)) return Number(arg);
-                        if (/^-?\d+$/.test(arg)) return Number(arg);
-                        if (arg.toLowerCase() === "true") return true;
-                        if (arg.toLowerCase() === "false") return false;
-                        return arg;
-                    });
+            const transaction = new TransactionBuilder(sourceAccount, {
+                fee: "1000",
+                networkPassphrase: sysConfig.networkPassphrase,
+            })
+                .addOperation(Operation.payment({
+                    destination: finalDest,
+                    asset: asset,
+                    amount: finalAmount.toString(),
+                }))
+                .addMemo(Memo.text(memoString))
+                .setTimeout(30)
+                .build();
 
-                const response = await invokeSorobanContract({
-                    sourcePublicKey: merchantAddress,
-                    contractId,
-                    functionName: contractFunctionName,
-                    functionArgs: parsedArgs,
-                    horizonUrl: sysConfig.horizonUrl,
-                    sorobanRpcUrl: networkConfig.sorobanRpcUrl,
-                    networkPassphrase: sysConfig.networkPassphrase,
-                    walletSign: signTx,
-                    fee: "100",
-                    timeout: 300,
-                });
-
-                hash = response.hash || response.id || "";
-                totalSpeed = ((Date.now() - startTime) / 1000).toFixed(2);
-                netSpeed = totalSpeed;
-                setSpeeds({ network: netSpeed, total: totalSpeed });
-                setTxHash(hash);
+            let signedXdrString = "";
+            try {
+                signedXdrString = await signTx(transaction.toXDR(), sysConfig.networkPassphrase);
+            } catch (signError: any) {
                 paymentLogged = true;
-                await savePaymentToFirestore(paymentId, "success", hash, netSpeed, totalSpeed, "", true, contractId, contractFunctionName, contractArgs);
-            } else {
-                const server = new Horizon.Server(sysConfig.horizonUrl);
-                const sourceAccount = await server.loadAccount(merchantAddress);
+                const totalSpeed = ((Date.now() - startTime) / 1000).toFixed(2);
+                const errorMsg = signError.message || "Transaction signing cancelled.";
+                await savePaymentToFirestore(paymentId, "cancelled", "", "0.00", totalSpeed, errorMsg);
+                throw new Error(errorMsg);
+            }
 
-                let asset = Asset.native();
-                if (finalToken === "PHPC") {
-                    asset = new Asset("PHPC", sysConfig.phpcIssuer);
-                } else if (finalToken === "USDC") {
-                    asset = new Asset("USDC", sysConfig.usdcIssuer);
+            setLoadingMsg("Submitting to the Stellar Network...");
+
+            const txBody = new URLSearchParams();
+            txBody.append("tx", signedXdrString);
+
+            const submitResponse = await fetch(`${sysConfig.horizonUrl}/transactions`, {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: txBody.toString()
+            });
+
+            const responseData = await submitResponse.json();
+            const receiveTime = Date.now();
+
+            if (!submitResponse.ok) {
+                let exactError = "Unknown Network Error";
+                if (responseData.extras && responseData.extras.result_codes) {
+                    const codes = responseData.extras.result_codes;
+                    exactError = codes.operations ? codes.operations.join(", ") : codes.transaction;
                 }
-
-                const transaction = new TransactionBuilder(sourceAccount, {
-                    fee: "1000",
-                    networkPassphrase: sysConfig.networkPassphrase,
-                })
-                    .addOperation(Operation.payment({
-                        destination: finalDest,
-                        asset: asset,
-                        amount: finalAmount.toString(),
-                    }))
-                    .addMemo(Memo.text(memoString))
-                    .setTimeout(30)
-                    .build();
-
-                let signedXdrString = "";
-                try {
-                    signedXdrString = await signTx(transaction.toXDR(), sysConfig.networkPassphrase);
-                } catch (signError: any) {
-                    paymentLogged = true;
-                    totalSpeed = ((Date.now() - startTime) / 1000).toFixed(2);
-                    const errorMsg = signError.message || "Transaction signing cancelled.";
-                    await savePaymentToFirestore(paymentId, "cancelled", "", "0.00", totalSpeed, errorMsg, false, "", "", "");
-                    throw new Error(errorMsg);
-                }
-
-                setLoadingMsg("Submitting to the Stellar Network...");
-
-                const txBody = new URLSearchParams();
-                txBody.append("tx", signedXdrString);
-
-                const submitResponse = await fetch(`${sysConfig.horizonUrl}/transactions`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                    body: txBody.toString()
-                });
-
-                const responseData = await submitResponse.json();
-                const receiveTime = Date.now();
-
-                if (!submitResponse.ok) {
-                    let exactError = "Unknown Network Error";
-                    if (responseData.extras && responseData.extras.result_codes) {
-                        const codes = responseData.extras.result_codes;
-                        exactError = codes.operations ? codes.operations.join(", ") : codes.transaction;
-                    }
-
-                    paymentLogged = true;
-                    totalSpeed = ((Date.now() - startTime) / 1000).toFixed(2);
-                    await savePaymentToFirestore(paymentId, "failed", "", "0.00", totalSpeed, exactError, false, "", "", "");
-
-                    if (exactError.includes("op_no_destination")) throw new Error("Failed: The receiving wallet does not exist yet. It must be funded with 1 XLM.");
-                    else if (exactError.includes("op_src_no_trust")) throw new Error(`Failed: YOUR wallet does not trust ${finalToken}.`);
-                    else if (exactError.includes("op_no_trust")) throw new Error(`Failed: The RECEIVING wallet does not trust ${finalToken}.`);
-                    else if (exactError.includes("op_underfunded")) throw new Error("Failed: Your wallet does not have enough funds.");
-                    else throw new Error(`Blockchain Rejected Transaction. Code: ${exactError}`);
-                }
-
-                totalSpeed = ((receiveTime - startTime) / 1000).toFixed(2);
-                netSpeed = totalSpeed;
-                if (responseData.created_at) {
-                    const ledgerTime = new Date(responseData.created_at).getTime();
-                    netSpeed = Math.max(0.1, Math.abs(receiveTime - ledgerTime) / 1000).toFixed(2);
-                }
-
-                setSpeeds({ network: netSpeed, total: totalSpeed });
-                const hashResponse = responseData.hash;
-                hash = hashResponse;
-
-                setLoadingMsg("Saving Receipt...");
 
                 paymentLogged = true;
-                await savePaymentToFirestore(paymentId, "success", hash, netSpeed, totalSpeed, "", false, "", "", "");
+                const totalSpeed = ((Date.now() - startTime) / 1000).toFixed(2);
+                await savePaymentToFirestore(paymentId, "failed", "", "0.00", totalSpeed, exactError);
 
-                setTxHash(hash);
+                if (exactError.includes("op_no_destination")) throw new Error("Failed: The receiving wallet does not exist yet. It must be funded with 1 XLM.");
+                else if (exactError.includes("op_src_no_trust")) throw new Error(`Failed: YOUR wallet does not trust ${finalToken}.`);
+                else if (exactError.includes("op_no_trust")) throw new Error(`Failed: The RECEIVING wallet does not trust ${finalToken}.`);
+                else if (exactError.includes("op_underfunded")) throw new Error("Failed: Your wallet does not have enough funds.");
+                else throw new Error(`Blockchain Rejected Transaction. Code: ${exactError}`);
+            }
 
-                if (auth.currentUser) {
-                    await fetchUsage(auth.currentUser.uid);
-                }
+            const totalSpeed = ((receiveTime - startTime) / 1000).toFixed(2);
+            let netSpeed = totalSpeed;
+            if (responseData.created_at) {
+                const ledgerTime = new Date(responseData.created_at).getTime();
+                netSpeed = Math.max(0.1, Math.abs(receiveTime - ledgerTime) / 1000).toFixed(2);
+            }
+
+            setSpeeds({ network: netSpeed, total: totalSpeed });
+            const hash = responseData.hash;
+
+            setLoadingMsg("Saving Receipt...");
+
+            paymentLogged = true;
+            await savePaymentToFirestore(paymentId, "success", hash, netSpeed, totalSpeed);
+
+            setTxHash(hash);
+
+            if (auth.currentUser) {
+                await fetchUsage(auth.currentUser.uid);
             }
 
         } catch (error: any) {
@@ -492,7 +423,7 @@ export default function SendPayment() {
 
             if (!paymentLogged) {
                 const totalSpeed = ((Date.now() - startTime) / 1000).toFixed(2);
-                await savePaymentToFirestore(paymentId, isCancelled ? "cancelled" : "failed", "", "0.00", totalSpeed, errorMsg, useContractPayment, contractId, contractFunctionName, contractArgs);
+                await savePaymentToFirestore(paymentId, isCancelled ? "cancelled" : "failed", "", "0.00", totalSpeed, errorMsg);
             }
 
             if (!isCancelled) {
@@ -510,11 +441,21 @@ export default function SendPayment() {
                 .pm-dual-fields { display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px; align-items: end; margin-bottom: 20px; }
                 .pm-card-left { backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,.06); border-radius: 24px; padding: 32px; position: relative; overflow: hidden; }
                 .pm-card-right { backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,.06); border-radius: 24px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px; position: relative; overflow: hidden; min-height: 400px; box-sizing: border-box; }
-                .pm-scanner-box { width: 100%; max-width: 300px; border-radius: 20px; overflow: hidden; border: 2px solid #60a5fa; box-shadow: 0 0 30px rgba(96,165,250,0.3); }
+                
+                /* Sleek Input Focus Glows */
+                .pm-input-field { width: 100%; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,.1); border-radius: 12px; padding: 14px 16px; color: #fff; outline: none; box-sizing: border-box; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+                .pm-input-field:focus { border-color: rgba(96, 165, 250, 0.6); box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.1); background: rgba(0,0,0,0.3); }
+                .pm-input-field.pro-glow:focus { border-color: rgba(245, 158, 11, 0.6); box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.1); }
 
-                @media (max-width: 992px) {
-                    .pm-layout-split { grid-template-columns: 1fr; gap: 24px; }
-                }
+                /* Holographic Scanner Overlay */
+                .pm-scanner-box { width: 100%; max-width: 300px; border-radius: 20px; overflow: hidden; border: 2px solid #60a5fa; box-shadow: 0 0 30px rgba(96,165,250,0.3); position: relative; }
+                .scan-laser { position: absolute; top: 0; left: 0; right: 0; height: 3px; background: #60a5fa; box-shadow: 0 0 15px 3px #60a5fa; animation: laserScan 2.5s infinite linear; z-index: 10; opacity: 0.8; }
+                @keyframes laserScan { 0% { top: 0%; opacity: 0; } 10% { opacity: 0.8; } 90% { opacity: 0.8; } 100% { top: 100%; opacity: 0; } }
+
+                /* Premium Pro Badge */
+                .pro-badge { display: inline-flex; align-items: center; gap: 4px; background: linear-gradient(135deg, rgba(245,158,11,0.2), rgba(217,119,6,0.2)); border: 1px solid rgba(245,158,11,0.4); padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 800; color: #fcd34d; letter-spacing: 0.05em; text-transform: uppercase; margin-left: 12px; vertical-align: middle; box-shadow: 0 0 15px rgba(245,158,11,0.2); }
+
+                @media (max-width: 992px) { .pm-layout-split { grid-template-columns: 1fr; gap: 24px; } }
                 @media (max-width: 576px) {
                     .pm-dual-fields { grid-template-columns: 1fr; gap: 12px; align-items: stretch; }
                     .pm-dual-fields > div:nth-child(2) { display: none !important; }
@@ -524,17 +465,7 @@ export default function SendPayment() {
 
             {isSubscribed && (
                 <motion.div
-                    style={{
-                        position: "absolute",
-                        top: "5%",
-                        left: "20%",
-                        width: 800,
-                        height: 800,
-                        background: "radial-gradient(circle, rgba(245,158,11,0.06) 0%, transparent 60%)",
-                        borderRadius: "50%",
-                        zIndex: -1,
-                        pointerEvents: "none"
-                    }}
+                    style={{ position: "absolute", top: "5%", left: "20%", width: 800, height: 800, background: "radial-gradient(circle, rgba(245,158,11,0.06) 0%, transparent 60%)", borderRadius: "50%", zIndex: -1, pointerEvents: "none" }}
                     animate={{ scale: [1, 1.2, 1], opacity: [0.4, 0.7, 0.4] }}
                     transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
                 />
@@ -545,8 +476,9 @@ export default function SendPayment() {
             </AnimatePresence>
 
             <div style={{ marginBottom: 32 }}>
-                <h1 style={{ fontSize: 36, fontWeight: 900, fontFamily: "'Nunito',sans-serif", color: "#fff", margin: 0, letterSpacing: "-0.02em" }}>
+                <h1 style={{ fontSize: 36, fontWeight: 900, fontFamily: "'Nunito',sans-serif", color: "#fff", margin: 0, letterSpacing: "-0.02em", display: "flex", alignItems: "center" }}>
                     Send Payment
+                    {isSubscribed && <motion.div className="pro-badge" initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ delay: 0.2 }}>✦ PRO</motion.div>}
                 </h1>
                 <p style={{ color: "#9ca3af", fontSize: 14, marginTop: 6 }}>Process secure, real-time blockchain payments to suppliers.</p>
             </div>
@@ -554,6 +486,7 @@ export default function SendPayment() {
             <MonthlyUsageCard monthlyUsage={monthlyUsage} isSubscribed={isSubscribed} usageLimit={sysConfig.freeTierCap} projectedUsage={projectedUsage} />
 
             <div className="pm-layout-split">
+                {/* LEFT CARD */}
                 <motion.div
                     animate={isSubscribed ? {
                         boxShadow: ["0px 0px 0px rgba(245,158,11,0)", "0px 10px 40px rgba(245,158,11,0.12)", "0px 0px 0px rgba(245,158,11,0)"],
@@ -565,7 +498,7 @@ export default function SendPayment() {
                 >
                     <div style={{ marginBottom: 20 }}>
                         <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8, fontWeight: 700 }}>Recipient Wallet Address</div>
-                        <input value={destination} onChange={e => setDestination(e.target.value)} placeholder="G..." style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: "#fff", fontSize: 13, fontFamily: "'DM Mono',monospace", outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} />
+                        <input className={`pm-input-field ${isSubscribed ? 'pro-glow' : ''}`} style={{ fontSize: 13, fontFamily: "'DM Mono',monospace" }} value={destination} onChange={e => setDestination(e.target.value)} placeholder="G..." />
                     </div>
 
                     <motion.button
@@ -589,10 +522,11 @@ export default function SendPayment() {
                             </div>
                             <input
                                 type="number"
+                                className={`pm-input-field ${isSubscribed ? 'pro-glow' : ''}`}
+                                style={{ fontSize: 16 }}
                                 value={amountInFiat}
                                 onChange={handleFiatChange}
                                 placeholder="0.00"
-                                style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: "#fff", fontSize: 16, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }}
                             />
                         </div>
 
@@ -611,44 +545,18 @@ export default function SendPayment() {
                             </div>
                             <input
                                 type="number"
+                                className={`pm-input-field ${isSubscribed ? 'pro-glow' : ''}`}
+                                style={{ color: isSubscribed ? "#fcd34d" : "#a78bfa", fontSize: 16 }}
                                 value={amount}
                                 onChange={handleCryptoChange}
                                 placeholder={token === 'XLM' ? "0.0000000" : "0.00"}
-                                style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: isSubscribed ? "#fcd34d" : "#a78bfa", fontSize: 16, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }}
                             />
                         </div>
                     </div>
 
-                    <div style={{ marginBottom: 20 }}>
-                        <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8, fontWeight: 700 }}>Payment Mode</div>
-                        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                            <button type="button" onClick={() => setUseContractPayment(false)} style={{ flex: 1, padding: "11px 14px", borderRadius: 12, border: useContractPayment ? "1px solid rgba(156,163,175,.3)" : "1px solid rgba(56,189,248,.8)", background: useContractPayment ? "rgba(255,255,255,0.04)" : "rgba(56,189,248,0.2)", color: "#fff", cursor: "pointer", fontWeight: 700 }}>Standard Payment</button>
-                            <button type="button" onClick={() => setUseContractPayment(true)} style={{ flex: 1, padding: "11px 14px", borderRadius: 12, border: useContractPayment ? "1px solid rgba(34,197,94,.8)" : "1px solid rgba(156,163,175,.3)", background: useContractPayment ? "rgba(34,197,94,0.2)" : "rgba(255,255,255,0.04)", color: "#fff", cursor: "pointer", fontWeight: 700 }}>Soroban Contract</button>
-                        </div>
-                    </div>
-
-                    {useContractPayment && (
-                        <div style={{ marginBottom: 24 }}>
-                            <div style={{ display: "grid", gap: 14 }}>
-                                <div>
-                                    <label style={{ color: "#9ca3af", fontSize: 12, marginBottom: 6, display: "block" }}>Soroban Contract ID</label>
-                                    <input value={contractId} onChange={e => setContractId(e.target.value)} placeholder="CA..." style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "12px 14px", color: "#fff", fontSize: 14, outline: "none", boxSizing: "border-box" }} />
-                                </div>
-                                <div>
-                                    <label style={{ color: "#9ca3af", fontSize: 12, marginBottom: 6, display: "block" }}>Contract Function</label>
-                                    <input value={contractFunctionName} onChange={e => setContractFunctionName(e.target.value)} placeholder="Function name" style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "12px 14px", color: "#fff", fontSize: 14, outline: "none", boxSizing: "border-box" }} />
-                                </div>
-                                <div>
-                                    <label style={{ color: "#9ca3af", fontSize: 12, marginBottom: 6, display: "block" }}>Contract Args (comma separated)</label>
-                                    <input value={contractArgs} onChange={e => setContractArgs(e.target.value)} placeholder="destination,amount,token" style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "12px 14px", color: "#fff", fontSize: 14, outline: "none", boxSizing: "border-box" }} />
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
                     <div style={{ marginBottom: 32 }}>
                         <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8, fontWeight: 700 }}>Memo / Reference Note</div>
-                        <input value={description} onChange={e => setDescription(e.target.value)} style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} />
+                        <input className={`pm-input-field ${isSubscribed ? 'pro-glow' : ''}`} style={{ fontSize: 13 }} value={description} onChange={e => setDescription(e.target.value)} />
                     </div>
 
                     <motion.button
@@ -684,6 +592,7 @@ export default function SendPayment() {
                     </motion.button>
                 </motion.div>
 
+                {/* RIGHT CARD */}
                 <motion.div
                     animate={isSubscribed ? {
                         boxShadow: ["0px 0px 0px rgba(245,158,11,0)", "0px 10px 40px rgba(245,158,11,0.12)", "0px 0px 0px rgba(245,158,11,0)"],
@@ -702,46 +611,76 @@ export default function SendPayment() {
                         </>
                     )}
 
+                    {/* IDLE STATE: Animated Pulsing Radar */}
                     {!isScanning && !txHash && (
                         <motion.div
-                            animate={isSubscribed ? { y: [-8, 8, -8] } : {}}
-                            transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+                            initial={{ opacity: 0 }} animate={{ opacity: 1 }}
                             style={{ textAlign: "center", color: "#9ca3af", fontSize: 15, zIndex: 10, maxWidth: 280, lineHeight: 1.6 }}
                         >
-                            <div style={{ fontSize: 56, marginBottom: 20, filter: isSubscribed ? "drop-shadow(0 0 20px rgba(245,158,11,0.4))" : "none" }}>💸</div>
-                            Enter details or scan a supplier's QR code to initiate a secure blockchain transfer.
+                            <div style={{ position: "relative", width: 120, height: 120, margin: "0 auto 32px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                {/* Concentric expanding rings */}
+                                {[0, 1, 2].map((i) => (
+                                    <motion.div
+                                        key={i}
+                                        style={{ position: "absolute", inset: 0, borderRadius: "50%", border: `2px solid ${isSubscribed ? 'rgba(245,158,11,0.4)' : 'rgba(96,165,250,0.4)'}` }}
+                                        animate={{ scale: [1, 2.2], opacity: [0.8, 0] }}
+                                        transition={{ duration: 3, repeat: Infinity, delay: i * 1, ease: "easeOut" }}
+                                    />
+                                ))}
+                                <motion.div
+                                    style={{ fontSize: 48, zIndex: 2, filter: isSubscribed ? "drop-shadow(0 0 20px rgba(245,158,11,0.6))" : "drop-shadow(0 0 20px rgba(96,165,250,0.6))" }}
+                                    animate={{ y: [-5, 5, -5], scale: [1, 1.05, 1] }}
+                                    transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+                                >
+                                    💸
+                                </motion.div>
+                            </div>
+                            <h3 style={{ color: "#fff", margin: "0 0 8px 0", fontSize: 18, fontFamily: "'Nunito',sans-serif", fontWeight: 800 }}>Ready to Transact</h3>
+                            Enter details on the left or scan a supplier's QR code to initiate a secure transfer.
                         </motion.div>
                     )}
 
+                    {/* SCANNING STATE: Holographic Overlay */}
                     {isScanning && (
-                        <div style={{ width: "100%", display: "flex", flexDirection: "column", alignItems: "center", zIndex: 10 }}>
-                            <div style={{ fontSize: 12, fontFamily: "'DM Mono',monospace", color: "#60a5fa", letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 24, fontWeight: 700 }}>Point at Supplier QR</div>
+                        <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} style={{ width: "100%", display: "flex", flexDirection: "column", alignItems: "center", zIndex: 10 }}>
+                            <div style={{ fontSize: 12, fontFamily: "'DM Mono',monospace", color: "#60a5fa", letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 24, fontWeight: 700 }}>
+                                <motion.span animate={{ opacity: [1, 0.4, 1] }} transition={{ duration: 1.5, repeat: Infinity }}>●</motion.span> Point at Supplier QR
+                            </div>
                             <div className="pm-scanner-box">
+                                <div className="scan-laser" />
                                 <Scanner onScan={(result) => handleScan(result[0].rawValue)} />
                             </div>
-                        </div>
+                        </motion.div>
                     )}
 
+                    {/* SUCCESS STATE: Staggered Entrance */}
                     {txHash && !isScanning && (
-                        <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", bounce: 0.5 }} style={{ textAlign: "center", width: "100%", zIndex: 10 }}>
-                            <div style={{ width: 80, height: 80, background: "linear-gradient(135deg, #10b981, #059669)", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 24px", fontSize: 40, color: "#fff", boxShadow: "0 10px 30px rgba(16,185,129,0.4)" }}>✓</div>
-                            <h3 style={{ color: "#fff", margin: "0 0 24px 0", fontFamily: "'Nunito',sans-serif", fontSize: 26, fontWeight: 900 }}>Transfer Verified</h3>
+                        <motion.div initial="hidden" animate="visible" variants={{ hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.2 } } }} style={{ textAlign: "center", width: "100%", zIndex: 10 }}>
 
-                            <div style={{ background: "rgba(0,0,0,.4)", border: "1px solid rgba(255,255,255,0.08)", padding: 24, borderRadius: 16, textAlign: "left", marginBottom: 32, backdropFilter: "blur(12px)" }}>
+                            <motion.div variants={{ hidden: { scale: 0 }, visible: { scale: 1, transition: { type: "spring", bounce: 0.5 } } }}>
+                                <div style={{ width: 80, height: 80, background: "linear-gradient(135deg, #10b981, #059669)", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 24px", fontSize: 40, color: "#fff", boxShadow: "0 10px 30px rgba(16,185,129,0.4)" }}>✓</div>
+                            </motion.div>
+
+                            <motion.h3 variants={{ hidden: { y: 20, opacity: 0 }, visible: { y: 0, opacity: 1 } }} style={{ color: "#fff", margin: "0 0 24px 0", fontFamily: "'Nunito',sans-serif", fontSize: 26, fontWeight: 900 }}>
+                                Transfer Verified
+                            </motion.h3>
+
+                            <motion.div variants={{ hidden: { y: 20, opacity: 0 }, visible: { y: 0, opacity: 1 } }} style={{ background: "rgba(0,0,0,.4)", border: "1px solid rgba(255,255,255,0.08)", padding: 24, borderRadius: 16, textAlign: "left", marginBottom: 32, backdropFilter: "blur(12px)", position: "relative", overflow: "hidden" }}>
+                                <div style={{ position: "absolute", top: 0, left: 0, bottom: 0, width: 4, background: "#10b981" }} />
                                 <div style={{ fontSize: 11, color: "#9ca3af", textTransform: "uppercase", marginBottom: 8, letterSpacing: "0.05em", fontWeight: 700 }}>Stellar Tx Hash</div>
                                 <a href={`${sysConfig.networkPassphrase === Networks.TESTNET ? "https://stellar.expert/explorer/testnet/tx/" : "https://stellar.expert/explorer/public/tx/"}${txHash}`} target="_blank" rel="noreferrer" style={{ color: "#34d399", fontSize: 13, wordBreak: "break-all", fontFamily: "'DM Mono',monospace", textDecoration: "none", lineHeight: 1.5 }}>
                                     {txHash}
                                 </a>
-                            </div>
+                            </motion.div>
 
-                            <div style={{ display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap" }}>
+                            <motion.div variants={{ hidden: { y: 20, opacity: 0 }, visible: { y: 0, opacity: 1 } }} style={{ display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap" }}>
                                 <div style={{ background: "rgba(16,185,129,0.1)", color: "#10b981", border: "1px solid rgba(16,185,129,0.2)", borderRadius: 24, padding: "10px 20px", fontSize: 13, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>
                                     ⚡ Network: {speeds.network}s
                                 </div>
                                 <div style={{ background: "rgba(167, 139, 250, 0.1)", color: "#a78bfa", border: "1px solid rgba(167, 139, 250, 0.2)", borderRadius: 24, padding: "10px 20px", fontSize: 13, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>
                                     ⏱️ Total: {speeds.total}s
                                 </div>
-                            </div>
+                            </motion.div>
                         </motion.div>
                     )}
                 </motion.div>

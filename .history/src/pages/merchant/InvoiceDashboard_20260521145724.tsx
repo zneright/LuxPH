@@ -158,13 +158,7 @@ export default function InvoiceDashboard({ userUid, stellarAddress }: InvoiceDas
 
         } catch (error: any) {
             console.error("Horizon Ledger Submission Matrix Crash:", error);
-
-            // 🚨 FIX: Extract string properly so we don't alert "[object Object]"
-            const errorMsg = typeof error === 'string'
-                ? error
-                : (error?.message || JSON.stringify(error));
-
-            alert(`Deployment Failed: ${errorMsg}`);
+            alert(`Deployment Failed: ${error.message || "Review dashboard network configurations."}`);
         } finally {
             setIsProcessing(false);
         }

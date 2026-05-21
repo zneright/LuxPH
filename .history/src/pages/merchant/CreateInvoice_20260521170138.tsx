@@ -487,40 +487,6 @@ export default function CreateInvoice() {
             />
           </div>
 
-          <div style={{ marginBottom: 24 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-              <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 700 }}>Invoice Mode</div>
-              <button type="button" onClick={() => setUseContractInvoice(!useContractInvoice)} style={{ background: useContractInvoice ? "rgba(16,185,129,0.16)" : "rgba(59,130,246,0.12)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 10, color: "#fff", padding: "8px 14px", fontSize: 12, cursor: "pointer" }}>
-                {useContractInvoice ? "Contract Invoice" : "Standard Invoice"}
-              </button>
-            </div>
-            {useContractInvoice && (
-              <div style={{ display: "grid", gap: 14 }}>
-                <div>
-                  <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Soroban Contract ID</div>
-                  <input value={contractId} onChange={(e) => setContractId(e.target.value)} placeholder="CA..." style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "12px 14px", color: "#fff", fontSize: 13, outline: "none" }} />
-                </div>
-                <div>
-                  <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Contract Function</div>
-                  <input value={contractFunctionName} onChange={(e) => setContractFunctionName(e.target.value)} placeholder="record_invoice" style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "12px 14px", color: "#fff", fontSize: 13, outline: "none" }} />
-                </div>
-                <div>
-                  <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Contract Args</div>
-                  <input value={contractArgs} onChange={(e) => setContractArgs(e.target.value)} placeholder="customerName,amount,token,memo" style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "12px 14px", color: "#fff", fontSize: 13, outline: "none" }} />
-                </div>
-              </div>
-            )}
-          </div>
-
-          {contingencyPercentage > 0 && (
-            <div style={{ marginBottom: 24, padding: "16px", borderRadius: 16, background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.15)" }}>
-              <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#10b981", textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 700, marginBottom: 8 }}>Contingency Reserve</div>
-              <div style={{ color: "#d1fae5", fontSize: 13, lineHeight: 1.6 }}>
-                This merchant has a contingency reserve of <strong>{contingencyPercentage}%</strong>. When you receive payment, the system will calculate the contingency amount and preserve it as a locked reserve.
-              </div>
-            </div>
-          )}
-
           {paymentStatus === "idle" ? (
             <motion.button
               type="button"

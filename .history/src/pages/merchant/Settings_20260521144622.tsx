@@ -135,7 +135,8 @@ export default function Settings() {
           .st-grid-layout { grid-template-columns: 1fr 1fr; }
         }
 
-        /* 🚨 Standardized override for Stellar Wallets Kit 🚨 */
+        /* 🚨 FIX: Standardized override for Stellar Wallets Kit 🚨 */
+        /* Breaks the modal out of the dashboard layout */
         stellar-wallets-modal,
         #stellar-wallets-kit-modal-root,
         [id^="stellar-wallets-modal"] {
@@ -143,12 +144,13 @@ export default function Settings() {
             top: 50% !important;
             left: 50% !important;
             transform: translate(-50%, -50%) !important;
-            z-index: 2147483647 !important;
+            z-index: 2147483647 !important; /* Maximum possible z-index */
             margin: 0 !important;
             bottom: auto !important;
             right: auto !important;
         }
 
+        /* Ensures the grey background overlay covers the entire window */
         stellar-wallets-modal::part(overlay) {
             position: fixed !important;
             top: 0 !important;
@@ -183,19 +185,9 @@ export default function Settings() {
               ⚠ Secure Connection Required
             </div>
             <h2 style={{ color: "#fff", fontSize: 22, fontFamily: "'Nunito',sans-serif", margin: "0 0 12px 0" }}>Link Your Wallet App</h2>
-            <p style={{ fontSize: 14, color: "#9ca3af", marginBottom: 20, lineHeight: 1.5 }}>
+            <p style={{ fontSize: 14, color: "#9ca3af", marginBottom: 24, lineHeight: 1.5 }}>
               Click below to automatically launch the connection portal. If you are on mobile, it will route directly to your wallet app.
             </p>
-
-            {/* 🚨 NEW: Desktop Extension Notice 🚨 */}
-            <div style={{ background: "rgba(59, 130, 246, 0.08)", border: "1px solid rgba(59, 130, 246, 0.2)", borderRadius: "10px", padding: "14px", marginBottom: "24px", textAlign: "left" }}>
-              <div style={{ fontSize: "13px", color: "#60a5fa", fontWeight: 800, marginBottom: "6px", fontFamily: "'Nunito',sans-serif", display: "flex", alignItems: "center", gap: "6px" }}>
-                🖥️ Desktop Browser Setup
-              </div>
-              <div style={{ fontSize: "13px", color: "#d1d5db", lineHeight: "1.5" }}>
-                If you are on a computer, you <strong>must</strong> have a wallet extension installed in Chrome/Brave (like Freighter) before connecting. Make sure it is unlocked!
-              </div>
-            </div>
 
             <button
               type="button"
@@ -207,13 +199,13 @@ export default function Settings() {
             </button>
 
             <div style={{ marginTop: 24, paddingTop: 20, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
-              <p style={{ fontSize: 12, color: "#6b7280", margin: 0 }}>Don't have a wallet extension yet? Get one here:</p>
+              <p style={{ fontSize: 12, color: "#6b7280", margin: 0 }}>Don't have a wallet installed? Get one here:</p>
               <div className="st-app-links">
                 <a href="https://freighter.app/" target="_blank" rel="noreferrer" className="st-app-link-btn">
-                  🚢 Get Freighter
+                  🚢 Open / Get Freighter
                 </a>
                 <a href="https://lobstr.co/" target="_blank" rel="noreferrer" className="st-app-link-btn">
-                  🦞 Get Lobstr
+                  🦞 Open / Get Lobstr
                 </a>
               </div>
             </div>

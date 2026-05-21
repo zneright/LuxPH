@@ -299,11 +299,7 @@ export default function SendPayment() {
         hash: string = "",
         netSpeed: string = "0.00",
         totalSpeed: string = "0.00",
-        errorMessage: string = "",
-        usingContract: boolean = false,
-        contractIdValue: string = "",
-        contractFunctionValue: string = "",
-        contractArgsValue: string = ""
+        errorMessage: string = ""
     ) => {
         if (!auth.currentUser) return;
         try {
@@ -317,10 +313,6 @@ export default function SendPayment() {
                 fiatCurrency: fiatCurrency,
                 token: token,
                 description: description,
-                paymentMechanism: usingContract ? "soroban" : "native",
-                contractId: usingContract ? contractIdValue : "",
-                contractFunctionName: usingContract ? contractFunctionValue : "",
-                contractArgs: usingContract ? contractArgsValue : "",
                 txHash: hash,
                 status: status === "success" ? "COMPLETED" : status,
                 errorMessage: errorMessage,
@@ -493,6 +485,25 @@ export default function SendPayment() {
             if (!paymentLogged) {
                 const totalSpeed = ((Date.now() - startTime) / 1000).toFixed(2);
                 await savePaymentToFirestore(paymentId, isCancelled ? "cancelled" : "failed", "", "0.00", totalSpeed, errorMsg, useContractPayment, contractId, contractFunctionName, contractArgs);
+            }
+
+            if (!isCancelled) {
+                alert(errorMsg || "Payment Failed.");
+            }
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+        } catch (error: any) {
+            console.error(error);
+            const errorMsg = error.message || "Unknown error occurred.";
+
+            const isCancelled = errorMsg.toLowerCase().includes("cancel") || errorMsg.toLowerCase().includes("reject") || errorMsg.toLowerCase().includes("decline");
+
+            if (!paymentLogged) {
+                const totalSpeed = ((Date.now() - startTime) / 1000).toFixed(2);
+                await savePaymentToFirestore(paymentId, isCancelled ? "cancelled" : "failed", "", "0.00", totalSpeed, errorMsg);
             }
 
             if (!isCancelled) {

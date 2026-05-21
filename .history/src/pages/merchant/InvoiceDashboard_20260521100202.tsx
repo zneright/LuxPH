@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { signTransaction } from '@stellar/freighter-api';
 import { TransactionBuilder, Networks, Operation, Keypair, Account, Transaction } from '@stellar/stellar-sdk';
 import { doc, getDoc, updateDoc, setDoc, increment } from 'firebase/firestore';
 import { db } from '../../config/firebase';
-import { useWallet } from '../../contexts/WalletContext'; // 🚨 NEW: Import your unified wallet context
 
 interface InvoiceDashboardProps {
     userUid: string | undefined;
@@ -15,9 +15,6 @@ export default function InvoiceDashboard({ userUid, stellarAddress }: InvoiceDas
     const [isProcessing, setIsProcessing] = useState(false);
     const [txHash, setTxHash] = useState("");
     const [invoiceAccount, setInvoiceAccount] = useState<string | null>(null);
-
-    // 🚨 NEW: Grab the signTx function from the context
-    const { signTx } = useWallet();
 
     const [networkConfig, setNetworkConfig] = useState({
         horizonUrl: FALLBACK_HORIZON_URL,
@@ -54,7 +51,7 @@ export default function InvoiceDashboard({ userUid, stellarAddress }: InvoiceDas
 
     const generateInvoiceEscrow = async () => {
         if (!stellarAddress) {
-            alert("Please connect your wallet in Settings first!");
+            alert("Please connect your Freighter wallet in Settings first!");
             return;
         }
 
@@ -74,7 +71,7 @@ export default function InvoiceDashboard({ userUid, stellarAddress }: InvoiceDas
             const dynamicInvoiceTarget = Keypair.random();
             const escrowPublicKey = dynamicInvoiceTarget.publicKey();
 
-            alert("Step 2 of 2: Packaging blueprint rules for Wallet validation...");
+            alert("Step 2 of 2: Packaging blueprint rules for Freighter validation...");
 
             const horizonTx = new TransactionBuilder(sourceAccount, {
                 fee: "10000",
@@ -98,21 +95,31 @@ export default function InvoiceDashboard({ userUid, stellarAddress }: InvoiceDas
                 .setTimeout(180)
                 .build();
 
-            alert("Please approve the transaction signature request inside your connected wallet...");
+            alert("Please approve the transaction signature request inside your Freighter wallet extension...");
 
-            // 🚨 FIX: Use the unified signTx method instead of hardcoded Freighter
-            const signedXdrStr = await signTx(horizonTx.toXDR(), networkConfig.passphrase);
+            const signResponse = await signTransaction(horizonTx.toXDR(), {
+                network: networkConfig.passphrase === Networks.PUBLIC ? "PUBLIC" : "TESTNET",
+                networkPassphrase: networkConfig.passphrase,
+            });
 
-            if (!signedXdrStr) {
-                throw new Error("Wallet returned an empty or unrecognized signature response.");
+            let freighterSignedXdr = "";
+
+            if (typeof signResponse === 'string') {
+                freighterSignedXdr = signResponse;
+            } else if (signResponse && typeof signResponse === 'object') {
+                if ((signResponse as any).error) {
+                    throw new Error(`Freighter Error: ${(signResponse as any).error}`);
+                }
+                freighterSignedXdr = (signResponse as any).signedTxXdr || (signResponse as any).signedTransaction || "";
+            }
+
+            if (!freighterSignedXdr) {
+                throw new Error("Freighter returned an empty or unrecognized signature response.");
             }
 
             alert("Appending secure local escrow transaction tokens...");
 
-            // Rebuild the transaction from the wallet's signed XDR
-            const finalTx = TransactionBuilder.fromXDR(signedXdrStr, networkConfig.passphrase) as Transaction;
-
-            // Add the local signature for the new escrow account
+            const finalTx = TransactionBuilder.fromXDR(freighterSignedXdr, networkConfig.passphrase) as Transaction;
             finalTx.sign(dynamicInvoiceTarget);
 
             alert("Submitting unified transaction blueprint package onto Horizon infrastructure...");
@@ -137,6 +144,7 @@ export default function InvoiceDashboard({ userUid, stellarAddress }: InvoiceDas
 
             // 🚨 FIRESTORE TRACKING SYNCHRONIZATION 🚨
             if (userUid) {
+                // A. Save the individual invoice record into the subcollection
                 const invoiceDocRef = doc(db, `merchants/${userUid}/invoices`, escrowPublicKey);
                 await setDoc(invoiceDocRef, {
                     invoiceAddress: escrowPublicKey,
@@ -144,10 +152,11 @@ export default function InvoiceDashboard({ userUid, stellarAddress }: InvoiceDas
                     merchantAddress: stellarAddress,
                     timestamp: new Date().toISOString(),
                     status: "pending",
-                    amount: "0",
+                    amount: "0",      // Placed as string to handle flexible parsing values later
                     fiatAmount: "0"
                 });
 
+                // B. Increment the global volume metrics on the merchant parent profile
                 const merchantRef = doc(db, "merchants", userUid);
                 await updateDoc(merchantRef, {
                     invoicesGenerated: increment(1)
@@ -158,13 +167,7 @@ export default function InvoiceDashboard({ userUid, stellarAddress }: InvoiceDas
 
         } catch (error: any) {
             console.error("Horizon Ledger Submission Matrix Crash:", error);
-
-            // 🚨 FIX: Extract string properly so we don't alert "[object Object]"
-            const errorMsg = typeof error === 'string'
-                ? error
-                : (error?.message || JSON.stringify(error));
-
-            alert(`Deployment Failed: ${errorMsg}`);
+            alert(`Deployment Failed: ${error.message || "Review dashboard network configurations."}`);
         } finally {
             setIsProcessing(false);
         }
@@ -230,3 +233,4 @@ export default function InvoiceDashboard({ userUid, stellarAddress }: InvoiceDas
         </div>
     );
 }
+

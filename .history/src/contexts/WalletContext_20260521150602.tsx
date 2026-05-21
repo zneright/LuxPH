@@ -120,7 +120,7 @@ class StellarWalletsKitAdapter implements WalletAdapter {
     async connect(network: StellarKitNetworks = StellarKitNetworks.TESTNET): Promise<string> {
         this.initializeKit(network);
         const result = await StellarWalletsKit.authModal({ container: document.body });
-
+        
         if (!result || !result.address) {
             throw new Error('Wallet connection was cancelled or failed.');
         }
