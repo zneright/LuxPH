@@ -11,7 +11,7 @@ interface FloatingNodeProps {
   y: string | number;
   size?: number;
 }
-//as
+
 const FloatingNode = ({ delay = 0, x, y, size = 1 }: FloatingNodeProps) => {
   const { randomDuration, randomDelay } = useMemo(() => ({
     randomDuration: 4 + Math.random() * 2,
