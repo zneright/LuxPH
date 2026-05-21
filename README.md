@@ -88,9 +88,7 @@ npm run preview
 - **App URL:** [I need to change this - TBD after mainnet deployment]
 - **Network:** Mainnet (Public)
 - **Status:** Coming Soon - Post-Hackathon Deployment
-- **Smart Contract ID:** `[I need to change this - Contract address pending mainnet deployment]`
 - **Horizon URL:** `https://horizon.stellar.org`
-- **Soroban RPC:** `https://soroban-mainnet.stellar.org`
 - 📸 **Screenshot — Stellar Expert (Mainnet):**
   ![Mainnet Screenshot](./screenshots/mainnet.png)
 
@@ -102,7 +100,7 @@ npm run preview
 ## 👨‍💻 Team
 | Name | Role | GitHub |
 |---|---|---|
-| Zneright | Full-Stack Developer & Product Lead | [@zneright](https://github.com/zneright) |
+| Renz Jericho Buday | Full-Stack Developer & Product Lead | [@zneright](https://github.com/zneright) |
 
 ## 📜 License
 MIT
