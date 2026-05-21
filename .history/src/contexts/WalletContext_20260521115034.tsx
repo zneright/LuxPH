@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { StellarWalletsKit, Networks as StellarKitNetworks } from '@creit.tech/stellar-wallets-kit';
 import { AlbedoModule } from '@creit.tech/stellar-wallets-kit/modules/albedo';
 import { FreighterModule } from '@creit.tech/stellar-wallets-kit/modules/freighter';
+import { WalletConnectModule } from '@creit.tech/stellar-wallets-kit/modules/wallet-connect';
 import { LobstrModule } from '@creit.tech/stellar-wallets-kit/modules/lobstr';
 
 // ==========================================

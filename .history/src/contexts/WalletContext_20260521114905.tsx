@@ -2,7 +2,8 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { StellarWalletsKit, Networks as StellarKitNetworks } from '@creit.tech/stellar-wallets-kit';
 import { AlbedoModule } from '@creit.tech/stellar-wallets-kit/modules/albedo';
 import { FreighterModule } from '@creit.tech/stellar-wallets-kit/modules/freighter';
-import { LobstrModule } from '@creit.tech/stellar-wallets-kit/modules/lobstr';
+import { WalletConnectModule } from '@creit.tech/stellar-wallets-kit/modules/wallet-connect';
+import { LOBSTRModule } from '@creit.tech/stellar-wallets-kit/modules/lobstr';
 
 // ==========================================
 // 1. ADAPTER ABSTRACTION INTERFACES
@@ -76,30 +77,13 @@ class StellarWalletsKitAdapter implements WalletAdapter {
             return;
         }
 
-        const modules = [
-            new AlbedoModule(),
-            new FreighterModule(),
-            new LobstrModule(),
-        ];
-
-        // WalletConnect requires a projectId and metadata - add it if configured in env
-        // const walletConnectProjectId = import.meta.env.VITE_WALLET_CONNECT_PROJECT_ID;
-        // if (walletConnectProjectId) {
-        //   modules.push(
-        //     new WalletConnectModule({
-        //       projectId: walletConnectProjectId,
-        //       metadata: {
-        //         name: 'LuxPH Merchant',
-        //         description: 'LuxPH Payment Platform',
-        //         url: window.location.origin,
-        //         icons: ['/logo.png'],
-        //       },
-        //     })
-        //   );
-        // }
-
         StellarWalletsKit.init({
-            modules,
+            modules: [
+                new AlbedoModule(),
+                new FreighterModule(),
+                new WalletConnectModule(),
+                new LOBSTRModule(),
+            ],
             network: StellarKitNetworks.TESTNET,
             authModal: {
                 showInstallLabel: true,
