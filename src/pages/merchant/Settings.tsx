@@ -30,8 +30,6 @@ export default function Settings() {
   const [isSubscribed, setIsSubscribed] = useState<boolean>(false);
   const [freeTierLimit, setFreeTierLimit] = useState<number>(100000);
 
-  const [targetNetwork, setTargetNetwork] = useState<string>("TESTNET");
-
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
@@ -42,11 +40,6 @@ export default function Settings() {
             const configData = configSnap.data();
             if (configData.freeTierMonthlyCap) {
               setFreeTierLimit(Number(configData.freeTierMonthlyCap));
-            }
-            if (configData.stellarNetwork === "Mainnet (Public)") {
-              setTargetNetwork("PUBLIC");
-            } else {
-              setTargetNetwork("TESTNET");
             }
           }
         } catch (err) {
@@ -170,7 +163,7 @@ export default function Settings() {
               <div style={{ width: 56, height: 56, borderRadius: 12, background: "linear-gradient(135deg,#7c3aed,#4f46e5)", display: "flex", alignItems: "center", justifyItems: "center", justifyContent: "center", fontSize: 24, fontFamily: "'Nunito',sans-serif", fontWeight: 800, color: "#fff", flexShrink: 0 }}>
                 {merchantData?.businessName ? merchantData.businessName.charAt(0).toUpperCase() : (user?.email ? user.email.charAt(0).toUpperCase() : "U")}
               </div>
-              <div style={{ overflow: "hidden", width: "100%" }}>
+              <div style={{ overflow: "hidden" }}>
                 <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'Nunito',sans-serif", color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {merchantData?.businessName || "Loading..."}
                 </div>
@@ -208,22 +201,22 @@ export default function Settings() {
           <div className="st-card-header">Connected Wallet</div>
           <div className="st-card-body">
             {stellarAddress ? (
-              <div style={{ display: "flex", flexDirection: "column", height: "100%", width: "100%" }}>
+              <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "rgba(74,222,128,.08)", border: "1px solid rgba(74,222,128,.2)", borderRadius: 8, marginBottom: 18, fontSize: 13, color: "#86efac" }}>
-                  ✓ Connected to Freighter ({targetNetwork})
+                  ✓ Freighter wallet connected
                 </div>
-                <div style={{ marginBottom: 20, width: "100%" }}>
+                <div style={{ marginBottom: 20 }}>
                   <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#6b7280", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Stellar Address</div>
                   <input readOnly value={stellarAddress} style={{ width: "100%", background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 8, padding: "10px 13px", color: "#9ca3af", fontSize: 12, outline: "none", boxSizing: "border-box", fontFamily: "'DM Mono',monospace" }} />
                 </div>
                 <div style={{ marginTop: "auto" }}>
-                  <button type="button" onClick={disconnectWallet} style={{ background: "rgba(248,113,113,.1)", color: "#f87171", border: "1px solid rgba(248,113,113,.25)", borderRadius: 7, padding: "8px 16px", fontSize: 12, cursor: "pointer", fontFamily: "'Nunito',sans-serif", transition: "all 0.2s", width: "100%" }}>
+                  <button type="button" onClick={disconnectWallet} style={{ background: "rgba(248,113,113,.1)", color: "#f87171", border: "1px solid rgba(248,113,113,.25)", borderRadius: 7, padding: "8px 16px", fontSize: 12, cursor: "pointer", fontFamily: "'Nunito',sans-serif", transition: "all 0.2s" }}>
                     Disconnect Wallet
                   </button>
                 </div>
               </div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", height: "100%", width: "100%" }}>
+              <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "rgba(250,204,21,.08)", border: "1px solid rgba(250,204,21,.2)", borderRadius: 8, marginBottom: 18, fontSize: 13, color: "#fde047" }}>
                   ⚠ No wallet connected
                 </div>
@@ -233,7 +226,7 @@ export default function Settings() {
                     type="button"
                     onClick={connectWallet}
                     disabled={isConnecting}
-                    style={{ background: isConnecting ? "transparent" : "linear-gradient(135deg,#7c3aed,#4f46e5)", color: "#fff", border: isConnecting ? "1px solid rgba(255,255,255,0.1)" : "none", borderRadius: 7, padding: "10px 16px", fontSize: 13, cursor: isConnecting ? "not-allowed" : "pointer", fontFamily: "'Nunito',sans-serif", fontWeight: 700, width: "100%" }}
+                    style={{ background: isConnecting ? "transparent" : "linear-gradient(135deg,#7c3aed,#4f46e5)", color: "#fff", border: isConnecting ? "1px solid rgba(255,255,255,0.1)" : "none", borderRadius: 7, padding: "10px 16px", fontSize: 13, cursor: isConnecting ? "not-allowed" : "pointer", fontFamily: "'Nunito',sans-serif", fontWeight: 700, width: isConnecting ? "100%" : "auto" }}
                   >
                     {isConnecting ? <LoadingBadge text="Connecting..." variant="secure" /> : "Connect Freighter"}
                   </button>
@@ -255,3 +248,4 @@ export default function Settings() {
     </motion.div>
   );
 }
+

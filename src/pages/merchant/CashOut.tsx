@@ -7,9 +7,7 @@ import { signTransaction } from "@stellar/freighter-api";
 import { AnimatePresence, motion } from "framer-motion";
 import { LoadingOverlay } from "../../components/ui/LoadingOverlay";
 
-// Hardcoded Testnet fallback issuer and anchor settlement targets
-const FALLBACK_ANCHOR = "GDZRE7N6PHB6CCM3VBRB5V7SDRB6CS4U6MTUL6Q6OMJEXHUTVPHPC001"; // Testnet Issuer
-const FALLBACK_USDC = "GCAXCH6S643WNNRLOLW52Z6T7A6A6T43L234D7JEXUSDC001";   // Testnet USDC Issuer
+const FALLBACK_ANCHOR = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
 
 const BANK_LOGOS: Record<string, string> = {
   BPI: "https://upload.wikimedia.org/wikipedia/en/c/c2/Bank_of_the_Philippine_Islands_logo.svg",
@@ -39,7 +37,7 @@ export default function CashOut() {
     networkPassphrase: Networks.TESTNET,
     horizonUrl: "https://horizon-testnet.stellar.org",
     phpcIssuer: FALLBACK_ANCHOR,
-    usdcIssuer: FALLBACK_USDC,
+    usdcIssuer: FALLBACK_ANCHOR,
     anchorAddress: FALLBACK_ANCHOR
   });
 
@@ -68,26 +66,24 @@ export default function CashOut() {
         let currentPassphrase = Networks.TESTNET;
         let currentHorizon = "https://horizon-testnet.stellar.org";
         let currentIssuer = FALLBACK_ANCHOR;
-        let currentUsdcIssuer = FALLBACK_USDC;
         let currentAnchorAddr = FALLBACK_ANCHOR;
 
         if (configSnap.exists()) {
           const c = configSnap.data();
-          const isTestnet = c.stellarNetwork ? c.stellarNetwork.includes("Testnet") : true;
+          const isTestnet = c.stellarNetwork === "Testnet (Futurenet)";
           currentPassphrase = isTestnet ? Networks.TESTNET : Networks.PUBLIC;
           currentHorizon = isTestnet ? "https://horizon-testnet.stellar.org" : "https://horizon.stellar.org";
           currentIssuer = c.phpcIssuerAddress || FALLBACK_ANCHOR;
-          currentUsdcIssuer = c.usdcIssuerAddress || FALLBACK_USDC;
           currentAnchorAddr = c.phpcIssuerAddress || FALLBACK_ANCHOR;
-        }
 
-        setSysConfig({
-          networkPassphrase: currentPassphrase,
-          horizonUrl: currentHorizon,
-          phpcIssuer: currentIssuer,
-          usdcIssuer: currentUsdcIssuer,
-          anchorAddress: currentAnchorAddr
-        });
+          setSysConfig({
+            networkPassphrase: currentPassphrase,
+            horizonUrl: currentHorizon,
+            phpcIssuer: currentIssuer,
+            usdcIssuer: c.usdcIssuerAddress || FALLBACK_ANCHOR,
+            anchorAddress: currentAnchorAddr
+          });
+        }
 
         onAuthStateChanged(auth, async (currentUser) => {
           setUser(currentUser);
@@ -255,6 +251,7 @@ export default function CashOut() {
       setLoadingMsg("Awaiting Freighter Signature...");
 
       const signResponse = await signTransaction(transaction.toXDR(), {
+        network: sysConfig.networkPassphrase === Networks.TESTNET ? "TESTNET" : "PUBLIC",
         networkPassphrase: sysConfig.networkPassphrase,
       });
 
@@ -368,6 +365,8 @@ export default function CashOut() {
     setQrUploaded(false);
   };
 
+  const totalOutGlobal = parseFloat(phpAmount || "0");
+
   return (
     <div style={{ position: "relative", minHeight: "80vh", padding: "4px" }}>
       <style>{`
@@ -377,7 +376,7 @@ export default function CashOut() {
         .co-method-shelf { display: flex; gap: 8px; margin-bottom: 16px; }
         .co-form-container { background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.08); border-radius: 16px; overflow: hidden; }
         .co-summary-container { background: #0f1322; border: 1px solid rgba(124,58,237,.3); border-radius: 16px; overflow: hidden; box-shadow: 0 10px 30px -10px rgba(124,58,237,0.2); }
-        .receipt-action-buttons { display: flex; gap: 12px; margin-top: 24px; }
+        .receipt-action-buttons { display: flex; gap: 12px; mt: 24px; }
         
         @media print { .hide-on-print { display: none !important; } }
         @media (max-width: 992px) {
@@ -594,7 +593,7 @@ export default function CashOut() {
                         width: "100%",
                         background: isOverBalance || parseFloat(tokenAmount) <= 0 ? "#374151" : "linear-gradient(135deg,#10b981,#059669)",
                         color: isOverBalance || parseFloat(tokenAmount) <= 0 ? "#9ca3af" : "#fff",
-                        border: "none", borderStyle: "none",
+                        border: "none",
                         borderRadius: 8,
                         padding: "14px",
                         fontWeight: 800,
@@ -697,3 +696,4 @@ export default function CashOut() {
     </div>
   );
 }
+

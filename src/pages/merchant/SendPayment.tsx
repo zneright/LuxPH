@@ -10,9 +10,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { LoadingOverlay } from "../../components/ui/LoadingOverlay";
 import MonthlyUsageCard from "../../components/dashboard/MonthlyUsageCard";
 
-// Hardcoded Testnet fallback issuer targets to match staging architecture configurations
-const FALLBACK_ISSUER = "GDZRE7N6PHB6CCM3VBRB5V7SDRB6CS4U6MTUL6Q6OMJEXHUTVPHPC001"; // Testnet Issuer
-const FALLBACK_USDC = "GCAXCH6S643WNNRLOLW52Z6T7A6A6T43L234D7JEXUSDC001";   // Testnet USDC Issuer
+const FALLBACK_ISSUER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
 
 const FloatingNode = ({ delay = 0, x, y, size = 1, color = "#f59e0b", blur = 0 }: { delay?: number, x: string, y: string, size?: number, color?: string, blur?: number }) => {
     const { randomDuration, randomDelay } = useMemo(() => ({
@@ -48,7 +46,7 @@ export default function SendPayment() {
         networkPassphrase: Networks.TESTNET,
         horizonUrl: "https://horizon-testnet.stellar.org",
         phpcIssuer: FALLBACK_ISSUER,
-        usdcIssuer: FALLBACK_USDC,
+        usdcIssuer: FALLBACK_ISSUER,
         freeTierCap: 100000
     });
 
@@ -81,26 +79,26 @@ export default function SendPayment() {
                 let currentPassphrase = Networks.TESTNET;
                 let currentHorizon = "https://horizon-testnet.stellar.org";
                 let currentIssuer = FALLBACK_ISSUER;
-                let currentUsdcIssuer = FALLBACK_USDC;
+                let currentUsdcIssuer = FALLBACK_ISSUER;
                 let currentFreeCap = 100000;
 
                 if (configSnap.exists()) {
                     const c = configSnap.data();
-                    const isTestnet = c.stellarNetwork ? c.stellarNetwork.includes("Testnet") : true;
+                    const isTestnet = c.stellarNetwork === "Testnet (Futurenet)";
                     currentPassphrase = isTestnet ? Networks.TESTNET : Networks.PUBLIC;
                     currentHorizon = isTestnet ? "https://horizon-testnet.stellar.org" : "https://horizon.stellar.org";
                     currentIssuer = c.phpcIssuerAddress || FALLBACK_ISSUER;
-                    currentUsdcIssuer = c.usdcIssuerAddress || FALLBACK_USDC;
+                    currentUsdcIssuer = c.usdcIssuerAddress || FALLBACK_ISSUER;
                     currentFreeCap = c.freeTierMonthlyCap || 100000;
-                }
 
-                setSysConfig({
-                    networkPassphrase: currentPassphrase,
-                    horizonUrl: currentHorizon,
-                    phpcIssuer: currentIssuer,
-                    usdcIssuer: currentUsdcIssuer,
-                    freeTierCap: currentFreeCap
-                });
+                    setSysConfig({
+                        networkPassphrase: currentPassphrase,
+                        horizonUrl: currentHorizon,
+                        phpcIssuer: currentIssuer,
+                        usdcIssuer: currentUsdcIssuer,
+                        freeTierCap: currentFreeCap
+                    });
+                }
 
                 onAuthStateChanged(auth, async (currentUser) => {
                     if (currentUser) {
@@ -221,13 +219,9 @@ export default function SendPayment() {
             return;
         }
 
-        if (window.confirm(`Do you want to send ${amount} ${token} to ${address.substring(0, 8)}...?`)) {
+        if (confirm(`Do you want to send ${amount} ${token} to ${address.substring(0, 8)}...?`)) {
             await executePayment(address);
         }
-    };
-
-    const handleCryptoFieldChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        handleCryptoAmountChange(e);
     };
 
     const savePaymentToFirestore = async (
@@ -303,8 +297,9 @@ export default function SendPayment() {
                 .build();
 
             const signResponse = await signTransaction(transaction.toXDR(), {
+                network: sysConfig.networkPassphrase === Networks.TESTNET ? "TESTNET" : "PUBLIC",
                 networkPassphrase: sysConfig.networkPassphrase,
-            });     
+            });
 
             if (!signResponse || signResponse.error) {
                 paymentLogged = true;
@@ -475,7 +470,7 @@ export default function SendPayment() {
                                     <option value="XLM" style={{ color: "#000" }}>XLM</option>
                                 </select>
                             </div>
-                            <input type="number" value={amount} onChange={handleCryptoFieldChange} placeholder="0.00" style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: isSubscribed ? "#fcd34d" : "#a78bfa", fontSize: 16, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} />
+                            <input type="number" value={amount} onChange={handleCryptoAmountChange} placeholder="0.00" style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: isSubscribed ? "#fcd34d" : "#a78bfa", fontSize: 16, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} />
                         </div>
                     </div>
 
@@ -537,7 +532,7 @@ export default function SendPayment() {
 
                     {!isScanning && !txHash && (
                         <motion.div
-                            animate={{ y: isSubscribed ? [-8, 8, -8] : 0 }}
+                            animate={isSubscribed ? { y: [-8, 8, -8] } : {}}
                             transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
                             style={{ textAlign: "center", color: "#9ca3af", fontSize: 15, zIndex: 10, maxWidth: 280, lineHeight: 1.6 }}
                         >
@@ -582,3 +577,4 @@ export default function SendPayment() {
         </div>
     );
 }
+

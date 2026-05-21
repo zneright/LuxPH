@@ -97,8 +97,9 @@ export default function InvoiceDashboard({ userUid, stellarAddress }: InvoiceDas
 
             alert("Please approve the transaction signature request inside your Freighter wallet extension...");
 
-            const signResponse = await signTransaction(transaction.toXDR(), {
-                networkPassphrase: sysConfig.networkPassphrase,
+            const signResponse = await signTransaction(horizonTx.toXDR(), {
+                network: networkConfig.passphrase === Networks.PUBLIC ? "PUBLIC" : "TESTNET",
+                networkPassphrase: networkConfig.passphrase,
             });
 
             let freighterSignedXdr = "";
@@ -232,3 +233,4 @@ export default function InvoiceDashboard({ userUid, stellarAddress }: InvoiceDas
         </div>
     );
 }
+

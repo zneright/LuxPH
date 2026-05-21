@@ -2,22 +2,21 @@ import React, { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { auth, db } from "../../config/firebase";
 import { onAuthStateChanged, type User } from "firebase/auth";
-import { doc, getDoc, updateDoc, collection, getDocs } from "firebase/firestore";
+import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { Horizon, TransactionBuilder, Networks, Operation, Asset } from "@stellar/stellar-sdk";
 import { signTransaction } from "@stellar/freighter-api";
 import { AnimatePresence, motion } from "framer-motion";
 import { LoadingOverlay } from "../../components/ui/LoadingOverlay";
 import MonthlyUsageCard from "../../components/dashboard/MonthlyUsageCard";
 
-// Hardcoded Testnet fallback settings for secure staging environment settlement routing
-const FALLBACK_TREASURY = "GDZRE7N6PHB6CCM3VBRB5V7SDRB6CS4U6MTUL6Q6OMJEXHUTVPHPC001"; // Testnet Treasury
-const FALLBACK_USDC = "GCAXCH6S643WNNRLOLW52Z6T7A6A6T43L234D7JEXUSDC001";   // Testnet USDC Issuer
+const FALLBACK_TREASURY = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+const FALLBACK_USDC = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
 
 export default function Subscription() {
   const navigate = useNavigate();
   const [user, setUser] = useState<User | null>(null);
   const [isSubscribed, setIsSubscribed] = useState<boolean>(false);
-  const [merchantAddress, setMerchantAddress] = useState<string>("");
+  const [merchantAddress, setMerchantAddress] = useState<string>(false);
   const [monthlyUsage, setMonthlyUsage] = useState<number>(0);
 
   const [sysConfig, setSysConfig] = useState({
@@ -45,32 +44,32 @@ export default function Subscription() {
         let currentPassphrase = Networks.TESTNET;
         let currentHorizon = "https://horizon-testnet.stellar.org";
         let currentIssuer = FALLBACK_TREASURY;
-        let currentUsdcIssuer = FALLBACK_USDC;
+        let currentUsdcIssuer = FALLBACK_TREASURY;
         let currentTreasury = FALLBACK_TREASURY;
         let currentProFee = 499;
         let currentFreeCap = 100000;
 
         if (configSnap.exists()) {
           const c = configSnap.data();
-          const isTestnet = c.stellarNetwork ? c.stellarNetwork.includes("Testnet") : true;
+          const isTestnet = c.stellarNetwork === "Testnet (Futurenet)";
           currentPassphrase = isTestnet ? Networks.TESTNET : Networks.PUBLIC;
           currentHorizon = isTestnet ? "https://horizon-testnet.stellar.org" : "https://horizon.stellar.org";
           currentIssuer = c.phpcIssuerAddress || FALLBACK_TREASURY;
-          currentUsdcIssuer = c.usdcIssuerAddress || FALLBACK_USDC;
+          currentUsdcIssuer = c.usdcIssuerAddress || FALLBACK_TREASURY;
           currentTreasury = c.phpcIssuerAddress || FALLBACK_TREASURY;
           currentProFee = c.proTierMonthlyFee || 499;
           currentFreeCap = c.freeTierMonthlyCap || 100000;
-        }
 
-        setSysConfig({
-          proFee: currentProFee,
-          freeCap: currentFreeCap,
-          networkPassphrase: currentPassphrase,
-          horizonUrl: currentHorizon,
-          phpcIssuer: currentIssuer,
-          usdcIssuer: currentUsdcIssuer,
-          treasuryAddress: currentTreasury
-        });
+          setSysConfig({
+            proFee: currentProFee,
+            freeCap: currentFreeCap,
+            networkPassphrase: currentPassphrase,
+            horizonUrl: currentHorizon,
+            phpcIssuer: currentIssuer,
+            usdcIssuer: currentUsdcIssuer,
+            treasuryAddress: currentTreasury
+          });
+        }
 
         onAuthStateChanged(auth, async (currentUser) => {
           setUser(currentUser);
@@ -185,8 +184,9 @@ export default function Subscription() {
       setLoadingMsg(`Awaiting Freighter signature for ${cryptoAmount} ${selectedToken}...`);
 
       const signResponse = await signTransaction(transaction.toXDR(), {
+        network: sysConfig.networkPassphrase === Networks.TESTNET ? "TESTNET" : "PUBLIC",
         networkPassphrase: sysConfig.networkPassphrase,
-      })
+      });
 
       if (!signResponse || signResponse.error) {
         throw new Error("Payment signature rejected by user.");
@@ -339,7 +339,7 @@ export default function Subscription() {
                   Unsubscribe (Downgrade)
                 </button>
               ) : (
-                <button type="button" onClick={() => setShowModal(true)} style={{ background: "linear-gradient(135deg,#7c3aed,#6d28d9)", color: "#fff", border: "none", borderStyle: "none", borderRadius: 8, padding: "10px 18px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "'Nunito',sans-serif", width: "100%" }}>
+                <button type="button" onClick={() => setShowModal(true)} style={{ background: "linear-gradient(135deg,#7c3aed,#6d28d9)", color: "#fff", border: "none", borderRadius: 8, padding: "10px 18px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "'Nunito',sans-serif", width: "100%" }}>
                   Upgrade to Pro
                 </button>
               )}
@@ -397,3 +397,4 @@ export default function Subscription() {
     </div>
   );
 }
+
