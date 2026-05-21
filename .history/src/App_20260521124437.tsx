@@ -73,6 +73,5 @@ export default function App() {
           </Routes>
         </BrowserRouter>
       </WalletProvider>
-    </NetworkProvider>
-  );
+      );
 }

@@ -15,7 +15,7 @@ export interface WalletAdapter {
     id: string;
     name: string;
     isAvailable(): boolean;
-    connect(network?: StellarKitNetworks): Promise<string>;
+    connect(): Promise<string>;
     disconnect(): Promise<void>;
     signTransaction(xdr: string, networkPassphrase: string): Promise<string>;
 }
@@ -104,8 +104,8 @@ class StellarWalletsKitAdapter implements WalletAdapter {
         return typeof window !== 'undefined';
     }
 
-    async connect(network: StellarKitNetworks = StellarKitNetworks.TESTNET): Promise<string> {
-        this.initializeKit(network);
+    async connect(): Promise<string> {
+        this.initializeKit();
 
         const result = await StellarWalletsKit.authModal({ container: document.body });
         if (!result || !result.address) {
@@ -157,7 +157,6 @@ const ADAPTERS: WalletAdapter[] = [
 ];
 
 export const WalletProvider = ({ children }: { children: ReactNode }) => {
-    const { networkConfig } = useNetwork();
     const [address, setAddress] = useState<string>('');
     const [isConnecting, setIsConnecting] = useState(false);
     const [activeAdapterId, setActiveAdapterId] = useState<string | null>(null);
@@ -179,7 +178,6 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
     // 🔥 FIX: Check if the argument is a valid string; if it's an event object, default to 'freighter'
     const connect = async (adapterInput?: string | any) => {
         const targetAdapterId = typeof adapterInput === 'string' ? adapterInput : 'freighter';
-        const networkKit = networkConfig.networkPassphrase === Networks.PUBLIC ? StellarKitNetworks.PUBLIC : StellarKitNetworks.TESTNET;
 
         setIsConnecting(true);
         try {
@@ -190,7 +188,7 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
                 throw new Error(`${adapter.name} is not installed on this browser.`);
             }
 
-            const pubKey = await adapter.connect(networkKit);
+            const pubKey = await adapter.connect();
 
             setAddress(pubKey);
             setActiveAdapterId(targetAdapterId);

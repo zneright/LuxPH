@@ -49,6 +49,7 @@ export default function CreateInvoice() {
   const [customerName, setCustomerName] = useState("");
   const [memo, setMemo] = useState("");
 
+  const { networkConfig, systemConfig } = useNetwork();
   const [merchantAddress, setMerchantAddress] = useState<string>("");
   const [monthlyUsage, setMonthlyUsage] = useState(0);
   const [isSubscribed, setIsSubscribed] = useState(false);
@@ -89,15 +90,6 @@ export default function CreateInvoice() {
     };
     initSystem();
   }, []);
-
-  useEffect(() => {
-    setSysConfig({
-      horizonUrl: networkConfig.horizonUrl,
-      phpcIssuer: systemConfig.phpcIssuerAddress,
-      usdcIssuer: systemConfig.usdcIssuerAddress,
-      freeTierCap: systemConfig.freeTierMonthlyCap,
-    });
-  }, [networkConfig, systemConfig]);
 
   const fetchUsage = async (uid: string) => {
     try {

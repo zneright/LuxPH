@@ -3,8 +3,6 @@ import { StellarWalletsKit, Networks as StellarKitNetworks } from '@creit.tech/s
 import { AlbedoModule } from '@creit.tech/stellar-wallets-kit/modules/albedo';
 import { FreighterModule } from '@creit.tech/stellar-wallets-kit/modules/freighter';
 import { LobstrModule } from '@creit.tech/stellar-wallets-kit/modules/lobstr';
-import { Networks } from '@stellar/stellar-sdk';
-import { useNetwork } from './NetworkContext';
 
 // ==========================================
 // 1. ADAPTER ABSTRACTION INTERFACES
@@ -15,7 +13,7 @@ export interface WalletAdapter {
     id: string;
     name: string;
     isAvailable(): boolean;
-    connect(network?: StellarKitNetworks): Promise<string>;
+    connect(): Promise<string>;
     disconnect(): Promise<void>;
     signTransaction(xdr: string, networkPassphrase: string): Promise<string>;
 }
@@ -73,8 +71,8 @@ class StellarWalletsKitAdapter implements WalletAdapter {
     name = 'Stellar Wallets Kit';
     private initialized = false;
 
-    private initializeKit(network: StellarKitNetworks = StellarKitNetworks.TESTNET) {
-        if (typeof window === 'undefined') {
+    private initializeKit() {
+        if (this.initialized || typeof window === 'undefined') {
             return;
         }
 
@@ -84,28 +82,40 @@ class StellarWalletsKitAdapter implements WalletAdapter {
             new LobstrModule(),
         ];
 
-        if (!this.initialized) {
-            StellarWalletsKit.init({
-                modules,
-                network,
-                authModal: {
-                    showInstallLabel: true,
-                    hideUnsupportedWallets: false,
-                },
-            });
-            this.initialized = true;
-            return;
-        }
+        // WalletConnect requires a projectId and metadata - add it if configured in env
+        // const walletConnectProjectId = import.meta.env.VITE_WALLET_CONNECT_PROJECT_ID;
+        // if (walletConnectProjectId) {
+        //   modules.push(
+        //     new WalletConnectModule({
+        //       projectId: walletConnectProjectId,
+        //       metadata: {
+        //         name: 'LuxPH Merchant',
+        //         description: 'LuxPH Payment Platform',
+        //         url: window.location.origin,
+        //         icons: ['/logo.png'],
+        //       },
+        //     })
+        //   );
+        // }
 
-        StellarWalletsKit.setNetwork(network);
+        StellarWalletsKit.init({
+            modules,
+            network: StellarKitNetworks.TESTNET,
+            authModal: {
+                showInstallLabel: true,
+                hideUnsupportedWallets: false,
+            },
+        });
+
+        this.initialized = true;
     }
 
     isAvailable(): boolean {
         return typeof window !== 'undefined';
     }
 
-    async connect(network: StellarKitNetworks = StellarKitNetworks.TESTNET): Promise<string> {
-        this.initializeKit(network);
+    async connect(): Promise<string> {
+        this.initializeKit();
 
         const result = await StellarWalletsKit.authModal({ container: document.body });
         if (!result || !result.address) {
@@ -157,7 +167,6 @@ const ADAPTERS: WalletAdapter[] = [
 ];
 
 export const WalletProvider = ({ children }: { children: ReactNode }) => {
-    const { networkConfig } = useNetwork();
     const [address, setAddress] = useState<string>('');
     const [isConnecting, setIsConnecting] = useState(false);
     const [activeAdapterId, setActiveAdapterId] = useState<string | null>(null);
@@ -179,7 +188,6 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
     // 🔥 FIX: Check if the argument is a valid string; if it's an event object, default to 'freighter'
     const connect = async (adapterInput?: string | any) => {
         const targetAdapterId = typeof adapterInput === 'string' ? adapterInput : 'freighter';
-        const networkKit = networkConfig.networkPassphrase === Networks.PUBLIC ? StellarKitNetworks.PUBLIC : StellarKitNetworks.TESTNET;
 
         setIsConnecting(true);
         try {
@@ -190,7 +198,7 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
                 throw new Error(`${adapter.name} is not installed on this browser.`);
             }
 
-            const pubKey = await adapter.connect(networkKit);
+            const pubKey = await adapter.connect();
 
             setAddress(pubKey);
             setActiveAdapterId(targetAdapterId);

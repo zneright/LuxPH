@@ -49,6 +49,7 @@ export default function CreateInvoice() {
   const [customerName, setCustomerName] = useState("");
   const [memo, setMemo] = useState("");
 
+  const { networkConfig, systemConfig } = useNetwork();
   const [merchantAddress, setMerchantAddress] = useState<string>("");
   const [monthlyUsage, setMonthlyUsage] = useState(0);
   const [isSubscribed, setIsSubscribed] = useState(false);
@@ -69,6 +70,28 @@ export default function CreateInvoice() {
   useEffect(() => {
     const initSystem = async () => {
       try {
+        const configSnap = await getDoc(doc(db, "system_config", "global"));
+        let currentFreeCap = 100000;
+        let currentHorizon = "https://horizon-testnet.stellar.org";
+        let currentIssuer = FALLBACK_ISSUER;
+        let currentUsdcIssuer = FALLBACK_USDC;
+
+        if (configSnap.exists()) {
+          const c = configSnap.data();
+          const isTestnet = c.stellarNetwork ? c.stellarNetwork.includes("Testnet") : true;
+          currentFreeCap = c.freeTierMonthlyCap || 100000;
+          currentHorizon = isTestnet ? "https://horizon-testnet.stellar.org" : "https://horizon.stellar.org";
+          currentIssuer = c.phpcIssuerAddress || FALLBACK_ISSUER;
+          currentUsdcIssuer = c.usdcIssuerAddress || FALLBACK_USDC;
+        }
+
+        setSysConfig({
+          horizonUrl: currentHorizon,
+          phpcIssuer: currentIssuer,
+          usdcIssuer: currentUsdcIssuer,
+          freeTierCap: currentFreeCap,
+        });
+
         onAuthStateChanged(auth, async (currentUser) => {
           if (currentUser) {
             const mDoc = await getDoc(doc(db, "merchants", currentUser.uid));
@@ -89,15 +112,6 @@ export default function CreateInvoice() {
     };
     initSystem();
   }, []);
-
-  useEffect(() => {
-    setSysConfig({
-      horizonUrl: networkConfig.horizonUrl,
-      phpcIssuer: systemConfig.phpcIssuerAddress,
-      usdcIssuer: systemConfig.usdcIssuerAddress,
-      freeTierCap: systemConfig.freeTierMonthlyCap,
-    });
-  }, [networkConfig, systemConfig]);
 
   const fetchUsage = async (uid: string) => {
     try {

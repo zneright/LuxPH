@@ -233,34 +233,6 @@ export default function PlatformConfig() {
               </select>
             </div>
 
-            {isNetworkConfigUnlocked && (
-              <>
-                <div style={{ marginBottom: 16 }}>
-                  <label style={{ display: "block", fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>
-                    Horizon URL
-                  </label>
-                  <input
-                    type="text"
-                    value={config.horizonUrl}
-                    onChange={(e) => handleConfigChange("horizonUrl", e.target.value)}
-                    style={{ width: "100%", background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.08)", borderRadius: 8, padding: "11px 14px", color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" }}
-                  />
-                </div>
-
-                <div style={{ marginBottom: 16 }}>
-                  <label style={{ display: "block", fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>
-                    Soroban RPC URL
-                  </label>
-                  <input
-                    type="text"
-                    value={config.sorobanRpcUrl}
-                    onChange={(e) => handleConfigChange("sorobanRpcUrl", e.target.value)}
-                    style={{ width: "100%", background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.08)", borderRadius: 8, padding: "11px 14px", color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" }}
-                  />
-                </div>
-              </>
-            )}
-
             <div style={{ marginBottom: 16 }}>
               <label style={{ display: "block", fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>
                 Default Invoice Longevity

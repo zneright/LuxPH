@@ -49,6 +49,7 @@ export default function CreateInvoice() {
   const [customerName, setCustomerName] = useState("");
   const [memo, setMemo] = useState("");
 
+  const { networkConfig, systemConfig } = useNetwork();
   const [merchantAddress, setMerchantAddress] = useState<string>("");
   const [monthlyUsage, setMonthlyUsage] = useState(0);
   const [isSubscribed, setIsSubscribed] = useState(false);
