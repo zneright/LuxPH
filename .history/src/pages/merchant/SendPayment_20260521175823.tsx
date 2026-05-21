@@ -347,8 +347,7 @@ export default function SendPayment() {
             let totalSpeed = "0.00";
 
             if (useContractPayment) {
-                const effectiveContractId = contractId || systemConfig.sorobanContractId;
-                if (!effectiveContractId) return alert("Please enter the Soroban contract ID or set it in Platform Configuration.");
+                if (!contractId) return alert("Please enter the Soroban contract ID.");
                 if (!contractFunctionName) return alert("Please enter the Soroban contract function name.");
                 if (!networkConfig?.sorobanRpcUrl) return alert("Soroban RPC URL is not configured.");
 
@@ -366,7 +365,7 @@ export default function SendPayment() {
 
                 const response = await invokeSorobanContract({
                     sourcePublicKey: merchantAddress,
-                    contractId: effectiveContractId,
+                    contractId,
                     functionName: contractFunctionName,
                     functionArgs: parsedArgs,
                     horizonUrl: sysConfig.horizonUrl,
@@ -380,10 +379,10 @@ export default function SendPayment() {
                 hash = response.hash || response.id || "";
                 totalSpeed = ((Date.now() - startTime) / 1000).toFixed(2);
                 netSpeed = totalSpeed;
-                setSpeeds({ network: netSpeed, total: netSpeed });
+                setSpeeds({ network: netSpeed, total: totalSpeed });
                 setTxHash(hash);
                 paymentLogged = true;
-                await savePaymentToFirestore(paymentId, "success", hash, netSpeed, totalSpeed, "", true, effectiveContractId, contractFunctionName, contractArgs);
+                await savePaymentToFirestore(paymentId, "success", hash, netSpeed, totalSpeed, "", true, contractId, contractFunctionName, contractArgs);
             } else {
                 const server = new Horizon.Server(sysConfig.horizonUrl);
                 const sourceAccount = await server.loadAccount(merchantAddress);

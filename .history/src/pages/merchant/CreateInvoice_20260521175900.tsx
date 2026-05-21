@@ -293,7 +293,6 @@ export default function CreateInvoice() {
         await invokeSorobanContract({
           sourcePublicKey: merchantAddress,
           contractId: effectiveContractId,
-          functionName: contractFunctionName,
           functionArgs: parsedArgs,
           horizonUrl: networkConfig.horizonUrl,
           sorobanRpcUrl: networkConfig.sorobanRpcUrl,

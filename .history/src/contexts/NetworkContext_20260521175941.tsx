@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../config/firebase";
-import { buildStellarNetworkConfig, DEFAULT_STELLAR_NETWORK_CONFIG, type StellarNetworkConfig, type StellarRuntimeEnvironment } from "../config/stellarNetwork";
+import { buildStellarNetworkConfig, DEFAULT_STELLAR_NETWORK_CONFIG, type StellarNetworkConfig } from "../config/stellarNetwork";
 
 export interface SystemConfigData {
     freeTierMonthlyCap: number;
@@ -11,7 +11,7 @@ export interface SystemConfigData {
     usdcIssuerAddress: string;
     pdaxAnchorUrl: string;
     pdaxAnchorAddress: string;
-    stellarNetwork: StellarRuntimeEnvironment;
+    stellarNetwork: string;
     horizonUrl?: string;
     sorobanRpcUrl?: string;
     sorobanContractId?: string;
@@ -46,7 +46,7 @@ export const NetworkProvider = ({ children }: { children: ReactNode }) => {
                 const configSnap = await getDoc(doc(db, "system_config", "global"));
                 if (configSnap.exists()) {
                     const data = configSnap.data();
-                    const activeNetwork: StellarRuntimeEnvironment = data.stellarNetwork === "Mainnet (Public)" ? "Mainnet (Public)" : "Testnet (Futurenet)";
+                    const activeNetwork = (data.stellarNetwork === "Mainnet (Public)" ? "Mainnet (Public)" : "Testnet (Futurenet)") as const;
                     const normalizedConfig: SystemConfigData = {
                         freeTierMonthlyCap: data.freeTierMonthlyCap ?? 100000,
                         proTierMonthlyFee: data.proTierMonthlyFee ?? 499,
@@ -62,11 +62,7 @@ export const NetworkProvider = ({ children }: { children: ReactNode }) => {
                     };
 
                     setSystemConfig(normalizedConfig);
-                    setNetworkConfig(buildStellarNetworkConfig({
-                        stellarNetwork: normalizedConfig.stellarNetwork,
-                        horizonUrl: normalizedConfig.horizonUrl,
-                        sorobanRpcUrl: normalizedConfig.sorobanRpcUrl,
-                    }));
+                    setNetworkConfig(buildStellarNetworkConfig(normalizedConfig));
                 } else {
                     setSystemConfig({
                         freeTierMonthlyCap: 100000,

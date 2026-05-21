@@ -11,7 +11,7 @@ export interface SystemConfigData {
     usdcIssuerAddress: string;
     pdaxAnchorUrl: string;
     pdaxAnchorAddress: string;
-    stellarNetwork: StellarRuntimeEnvironment;
+    stellarNetwork: string;
     horizonUrl?: string;
     sorobanRpcUrl?: string;
     sorobanContractId?: string;

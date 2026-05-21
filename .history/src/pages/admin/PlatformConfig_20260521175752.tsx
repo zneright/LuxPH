@@ -75,7 +75,7 @@ export default function PlatformConfig() {
             freeTierMonthlyCap: systemData.freeTierMonthlyCap ?? DEFAULT_CONFIG.freeTierMonthlyCap,
             proTierMonthlyFee: systemData.proTierMonthlyFee ?? DEFAULT_CONFIG.proTierMonthlyFee,
             invoiceExpiryDefault: systemData.invoiceExpiryDefault ?? DEFAULT_CONFIG.invoiceExpiryDefault,
-            phpcIssuerAddress: systemData.phpcIssuerAddress ?? DEFAULT_CONFIG.phpcIssuerAddress,
+            phpcIssuerAddress: systemData.phpcIssuerAddress ?? DEFAULT_CONFIG.phppcIssuerAddress,
             usdcIssuerAddress: systemData.usdcIssuerAddress ?? DEFAULT_CONFIG.usdcIssuerAddress,
             pdaxAnchorUrl: systemData.pdaxAnchorUrl ?? DEFAULT_CONFIG.pdaxAnchorUrl,
             pdaxAnchorAddress: systemData.pdaxAnchorAddress ?? DEFAULT_CONFIG.pdaxAnchorAddress,
@@ -265,21 +265,20 @@ export default function PlatformConfig() {
                   />
                 </div>
 
+                <div style={{ marginBottom: 16 }}>
+                  <label style={{ display: "block", fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>
+                    Soroban Contract ID
+                  </label>
+                  <input
+                    type="text"
+                    value={config.sorobanContractId}
+                    onChange={(e) => handleConfigChange("sorobanContractId", e.target.value)}
+                    placeholder="Contract ID from deployment"
+                    style={{ width: "100%", background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.08)", borderRadius: 8, padding: "11px 14px", color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" }}
+                  />
+                </div>
               </>
             )}
-
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ display: "block", fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>
-                Soroban Contract ID
-              </label>
-              <input
-                type="text"
-                value={config.sorobanContractId}
-                onChange={(e) => handleConfigChange("sorobanContractId", e.target.value)}
-                placeholder="Contract ID from deployment"
-                style={{ width: "100%", background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.08)", borderRadius: 8, padding: "11px 14px", color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box" }}
-              />
-            </div>
 
             <div style={{ marginBottom: 16 }}>
               <label style={{ display: "block", fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>

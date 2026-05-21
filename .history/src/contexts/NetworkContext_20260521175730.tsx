@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../config/firebase";
-import { buildStellarNetworkConfig, DEFAULT_STELLAR_NETWORK_CONFIG, type StellarNetworkConfig, type StellarRuntimeEnvironment } from "../config/stellarNetwork";
+import { buildStellarNetworkConfig, DEFAULT_STELLAR_NETWORK_CONFIG, type StellarNetworkConfig } from "../config/stellarNetwork";
 
 export interface SystemConfigData {
     freeTierMonthlyCap: number;
@@ -11,7 +11,7 @@ export interface SystemConfigData {
     usdcIssuerAddress: string;
     pdaxAnchorUrl: string;
     pdaxAnchorAddress: string;
-    stellarNetwork: StellarRuntimeEnvironment;
+    stellarNetwork: string;
     horizonUrl?: string;
     sorobanRpcUrl?: string;
     sorobanContractId?: string;
@@ -46,7 +46,6 @@ export const NetworkProvider = ({ children }: { children: ReactNode }) => {
                 const configSnap = await getDoc(doc(db, "system_config", "global"));
                 if (configSnap.exists()) {
                     const data = configSnap.data();
-                    const activeNetwork: StellarRuntimeEnvironment = data.stellarNetwork === "Mainnet (Public)" ? "Mainnet (Public)" : "Testnet (Futurenet)";
                     const normalizedConfig: SystemConfigData = {
                         freeTierMonthlyCap: data.freeTierMonthlyCap ?? 100000,
                         proTierMonthlyFee: data.proTierMonthlyFee ?? 499,
@@ -55,18 +54,14 @@ export const NetworkProvider = ({ children }: { children: ReactNode }) => {
                         usdcIssuerAddress: data.usdcIssuerAddress ?? "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
                         pdaxAnchorUrl: data.pdaxAnchorUrl ?? "https://anchor.pdax.ph",
                         pdaxAnchorAddress: data.pdaxAnchorAddress ?? "GDZRE7N6PHB6CCM3VBRB5V7SDRB6CS4U6MTUL6Q6OMJEXHUTVPHPC001",
-                        stellarNetwork: activeNetwork,
+                        stellarNetwork: data.stellarNetwork ?? DEFAULT_STELLAR_NETWORK_CONFIG.stellarNetwork,
                         horizonUrl: data.horizonUrl,
                         sorobanRpcUrl: data.sorobanRpcUrl,
                         sorobanContractId: data.sorobanContractId ?? "",
                     };
 
                     setSystemConfig(normalizedConfig);
-                    setNetworkConfig(buildStellarNetworkConfig({
-                        stellarNetwork: normalizedConfig.stellarNetwork,
-                        horizonUrl: normalizedConfig.horizonUrl,
-                        sorobanRpcUrl: normalizedConfig.sorobanRpcUrl,
-                    }));
+                    setNetworkConfig(buildStellarNetworkConfig(normalizedConfig));
                 } else {
                     setSystemConfig({
                         freeTierMonthlyCap: 100000,
@@ -75,9 +70,7 @@ export const NetworkProvider = ({ children }: { children: ReactNode }) => {
                         phpcIssuerAddress: "GBSTRH776KCSX6NRE4LHYOM3E5O6F4PC01MAINNETISSUER",
                         usdcIssuerAddress: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
                         pdaxAnchorUrl: "https://anchor.pdax.ph",
-                        pdaxAnchorAddress: "GDZRE7N6PHB6CCM3VBRB5V7SDRB6CS4U6MTUL6Q6OMJEXHUTVPHPC001",
                         stellarNetwork: DEFAULT_STELLAR_NETWORK_CONFIG.stellarNetwork,
-                        sorobanContractId: "",
                     });
                     setNetworkConfig(DEFAULT_STELLAR_NETWORK_CONFIG);
                 }
@@ -90,9 +83,7 @@ export const NetworkProvider = ({ children }: { children: ReactNode }) => {
                     phpcIssuerAddress: "GBSTRH776KCSX6NRE4LHYOM3E5O6F4PC01MAINNETISSUER",
                     usdcIssuerAddress: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
                     pdaxAnchorUrl: "https://anchor.pdax.ph",
-                    pdaxAnchorAddress: "GDZRE7N6PHB6CCM3VBRB5V7SDRB6CS4U6MTUL6Q6OMJEXHUTVPHPC001",
                     stellarNetwork: DEFAULT_STELLAR_NETWORK_CONFIG.stellarNetwork,
-                    sorobanContractId: "",
                 });
                 setNetworkConfig(DEFAULT_STELLAR_NETWORK_CONFIG);
             } finally {
