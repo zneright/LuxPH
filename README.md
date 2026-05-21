@@ -30,6 +30,7 @@ LuxPH was built to empower Filipino merchants and individuals with blockchain-ba
 - **Subscription Tiers** — Free and Pro plans with flexible rate limits and feature access.
 - **Cashout Management** — Convert crypto to fiat with integrated anchor support (PDAX integration).
 - **Contingency Vault** — Automated ledger-locked savings engine utilizing Time-Bound Claimable Balances on Stellar.
+  
 ![React](https://img.shields.io/badge/React-19.2-blue?style=flat&logo=react)
 ![TypeScript](https://img.shields.io/badge/TypeScript-6.0-blue?style=flat&logo=typescript)
 ![Vite](https://img.shields.io/badge/Vite-8.0-purple?style=flat&logo=vite)
