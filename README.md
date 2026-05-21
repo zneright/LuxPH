@@ -115,8 +115,8 @@ MIT
 ### ✅ Submission Checklist
 - [x] GitHub Repository with complete documentation
 - [x] README.md following required format
-- [x] Testnet deployment (address: [I need to change this])
-- [x] Mainnet deployment (address: [I need to change this])
+- [x] Testnet deployment: https://stellar.expert/explorer/testnet/account/GACS6IIZAARYJ2SGVLVADHDASI2TII2YBZGECCBE6WOSKOB37TXZ4WJV
+- [x] Mainnet deployment: https://stellar.expert/explorer/public/tx/af82ef715998918e7edcc1ede9ce2c975b4c64fe33e0f618a6ae2a5ba8bcac9d
 - [ ] Testnet screenshot (need to add to `./screenshots/testnet.png`)
 - [ ] Mainnet screenshot (need to add to `./screenshots/mainnet.png`)
 - [ ] Demo video (2-3 minutes)
