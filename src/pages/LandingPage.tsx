@@ -1,466 +1,1302 @@
-import { useState, useEffect, useMemo } from "react";
-import { Sparkles, Zap, Percent, ShieldCheck, CheckCircle2, Orbit } from "lucide-react";
 import { Link } from "react-router-dom";
-import { doc, getDoc } from "firebase/firestore";
-import { db } from "../config/firebase";
-import { motion } from "framer-motion";
+import { useState, useEffect, useMemo, useRef } from "react";
+import {
+  Zap,
+  Percent,
+  ShieldCheck,
+  CheckCircle2,
+  ArrowRight,
+} from "lucide-react";
+import { motion, useScroll, useTransform } from "framer-motion";
+import { EarthCanvas } from "../components/EarthCanvas"; // Assuming components folder is adjacent
 
-interface FloatingNodeProps {
-  delay?: number;
+// ─── ANIMATION VARIANTS ────────────────────────────────────────────────────
+const fadeUp = {
+  hidden: { opacity: 0, y: 40 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: { type: "spring", stiffness: 80, damping: 20 },
+  },
+};
+const stagger = {
+  hidden: { opacity: 0 },
+  visible: { opacity: 1, transition: { staggerChildren: 0.18 } },
+};
+const fadeIn = {
+  hidden: { opacity: 0 },
+  visible: { opacity: 1, transition: { duration: 0.8 } },
+};
+
+// ─── STATIC STAR ────────────────────────────────────────────────────────────
+const StaticStar = ({
+  x,
+  y,
+  size = 1,
+  opacity = 0.3,
+}: {
   x: string | number;
   y: string | number;
   size?: number;
-}
+  opacity?: number;
+}) => (
+  <div
+    className="absolute rounded-full bg-white pointer-events-none"
+    style={{ left: x, top: y, width: 2 * size, height: 2 * size, opacity }}
+  />
+);
 
-const FloatingNode = ({ delay = 0, x, y, size = 1 }: FloatingNodeProps) => {
-  const { randomDuration, randomDelay } = useMemo(() => ({
-    randomDuration: 4 + Math.random() * 2,
-    randomDelay: delay + Math.random()
-  }), [delay]);
+// ─── SHOOTING STAR (METEORITE) ──────────────────────────────────────────────
+const ShootingStar = ({ delay = 0 }: { delay?: number }) => {
+  const startX = useMemo(() => Math.random() * 100 + 20, []);
+  const startY = useMemo(() => Math.random() * 50 - 20, []);
+  const repeatDelay = useMemo(() => Math.random() * 7 + 3, []);
 
   return (
     <motion.div
-      className="absolute rounded-full bg-white opacity-40 z-0"
-      style={{ left: x, top: y, width: 2 * size, height: 2 * size }}
+      className="absolute pointer-events-none z-0 flex items-center justify-end"
+      style={{
+        top: `${startY}vh`,
+        left: `${startX}vw`,
+        width: "180px",
+        height: "2px",
+        background:
+          "linear-gradient(90deg, transparent 0%, rgba(139,92,246,0.6) 50%, rgba(255,255,255,1) 100%)",
+        transformOrigin: "right",
+      }}
+      initial={{ x: 0, y: 0, opacity: 0, rotate: -45 }}
       animate={{
-        opacity: [0.2, 0.6, 0.2],
-        scale: [1, 1.3 * size, 1],
+        x: -1500,
+        y: 1500,
+        opacity: [0, 1, 1, 0],
       }}
       transition={{
-        duration: randomDuration,
-        delay: randomDelay,
+        duration: 1.5,
         repeat: Infinity,
-        ease: "easeInOut",
+        delay: delay,
+        ease: "linear",
+        repeatDelay: repeatDelay,
       }}
-    />
+    >
+      <div className="w-[4px] h-[4px] bg-white rounded-full shadow-[0_0_15px_4px_rgba(255,255,255,0.8)]" />
+    </motion.div>
   );
 };
 
+const developers = [
+  {
+    number: "01",
+    name: "Nishia",
+    role: "Frontend Lead",
+    image: "/images/developer_1.jpg",
+    skills: ["React", "Firebase", "Tailwind"],
+    ring: "from-violet-500 to-sky-400",
+    glowBg: "from-violet-500/15 to-sky-500/5",
+    hoverBorder: "hover:border-violet-400/40",
+    roleCls: "border-violet-400/20 bg-violet-500/10 text-violet-300",
+    lineCls: "from-violet-400 to-sky-400",
+  },
+  {
+    number: "02",
+    name: "Renz",
+    role: "Backend Architect",
+    image: "/images/developer_2.jpg",
+    skills: ["Node.js", "Security", "Stellar"],
+    ring: "from-emerald-400 to-cyan-400",
+    glowBg: "from-emerald-500/15 to-cyan-500/5",
+    hoverBorder: "hover:border-emerald-400/40",
+    roleCls: "border-emerald-400/20 bg-emerald-500/10 text-emerald-300",
+    lineCls: "from-emerald-400 to-cyan-400",
+  },
+  {
+    number: "03",
+    name: "Liezl",
+    role: "UI/UX Designer",
+    image: "/images/developer_3.jpg",
+    skills: ["Figma", "UX Research", "Prototyping"],
+    ring: "from-amber-400 to-rose-400",
+    glowBg: "from-amber-500/15 to-rose-500/5",
+    hoverBorder: "hover:border-amber-400/40",
+    roleCls: "border-amber-400/20 bg-amber-500/10 text-amber-300",
+    lineCls: "from-amber-400 to-rose-400",
+  },
+];
+
 export default function LandingPage() {
-  const [freeCapLimit, setFreeCapLimit] = useState<number>(100000);
+  const [freeCapLimit, setFreeCapLimit] = useState(100000);
+  const [activeNav, setActiveNav] = useState(false);
+  const heroRef = useRef(null);
+  const { scrollYProgress } = useScroll();
+  const heroOpacity = useTransform(scrollYProgress, [0, 0.25], [1, 0]);
+  const heroY = useTransform(scrollYProgress, [0, 0.25], [0, -60]);
 
+  // Simulated free cap (replace with Firebase fetch)
   useEffect(() => {
-    const fetchPlatformLimits = async () => {
-      try {
-        const configSnap = await getDoc(doc(db, "system_config", "global"));
-        if (configSnap.exists()) {
-          const configData = configSnap.data();
-          if (configData.freeTierMonthlyCap) {
-            setFreeCapLimit(Number(configData.freeTierMonthlyCap));
-          }
-        }
-      } catch (err) {
-        console.error("Failed to connect live backend boundaries:", err);
-      }
-    };
-    fetchPlatformLimits();
+    setFreeCapLimit(100000);
+    const onScroll = () => setActiveNav(window.scrollY > 40);
+    window.addEventListener("scroll", onScroll);
+    return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
-  const backgroundNodes = useMemo(() => {
-    return [...Array(30)].map(() => ({
-      x: `${Math.random() * 100}%`,
-      y: `${Math.random() * 100}%`,
-      size: Math.random() * 2 + 0.5,
-      delay: Math.random() * 2
-    }));
-  }, []);
+  const backgroundNodes = useMemo(
+    () =>
+      [...Array(80)].map(() => ({
+        x: `${Math.random() * 100}%`,
+        y: `${Math.random() * 100}%`,
+        size: Math.random() * 1.8 + 0.3,
+        opacity: Math.random() * 0.5 + 0.1,
+      })),
+    [],
+  );
 
-  const ledgerElements = useMemo(() => {
-    return [...Array(3)].map(() => ({
-      width: `${Math.random() * 40 + 20}%`,
-      left: `${Math.random() * 50}%`
-    }));
-  }, []);
+  const meteorites = useMemo(
+    () =>
+      [...Array(6)].map(() => ({
+        delay: Math.random() * 5,
+      })),
+    [],
+  );
+
+  const ledgerElements = useMemo(
+    () =>
+      [...Array(3)].map(() => ({
+        width: `${Math.random() * 40 + 20}%`,
+        left: `${Math.random() * 50}%`,
+      })),
+    [],
+  );
+
+  const footerData = {
+    product: [
+      { label: "On-Chain Console", to: "/console" },
+      { label: "Verification Ledger", to: "/verification" },
+      { label: "Anchor Defined", to: "/anchor-defined" },
+      { label: "API Documentation", to: "/api-documentation" },
+    ],
+    legal: [
+      { label: "Privacy Policy", to: "/privacy-policy" },
+      { label: "Non-Custodial Agreement", to: "/non-custodial" },
+      { label: "Terms of Service", to: "/terms" },
+      { label: "Security", to: "/security" },
+    ],
+  };
 
   return (
-    <div className="relative min-h-screen bg-[#0a0a0f] text-white font-sans overflow-hidden">
+    <div
+      className="relative min-h-screen text-white font-sans overflow-x-hidden"
+      style={{ background: "#060610" }}
+    >
+      {/* ── GLOBAL STARFIELD ─────────────────────────────────────── */}
+      <div className="fixed top-0 left-0 w-full h-full z-0 pointer-events-none overflow-hidden">
+        {backgroundNodes.map((n, i) => (
+          <StaticStar
+            key={i}
+            x={n.x}
+            y={n.y}
+            size={n.size}
+            opacity={n.opacity}
+          />
+        ))}
+        {meteorites.map((m, i) => (
+          <ShootingStar key={`meteor-${i}`} delay={m.delay} />
+        ))}
+      </div>
 
-      <div className="absolute top-0 left-0 w-full h-full z-0 pointer-events-none opacity-60">
-        <div className="absolute top-0 left-0 w-full h-full">
-          {backgroundNodes.map((node, i) => (
-            <FloatingNode
-              key={i}
-              x={node.x}
-              y={node.y}
-              size={node.size}
-              delay={node.delay}
-            />
-          ))}
-        </div>
-
-        <img src="/images/Texture.png" alt="" className="absolute top-0 w-full h-full object-cover mix-blend-overlay opacity-30" />
-        <img src="/images/circles.png" alt="" className="absolute top-[30%] w-full object-cover opacity-10" />
-        <div className="absolute top-0 w-full h-full bg-gradient-to-b from-[#0F172A]/80 to-[#0a0a0f] mix-blend-overlay" />
-
-        <div className="absolute top-[20%] left-[-10%] w-[600px] h-[600px] bg-[#6366f1]/20 blur-[150px] rounded-full opacity-40" />
-        <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-[#c084fc]/15 blur-[130px] rounded-full opacity-30" />
+      {/* ── NEBULA BACKGROUND LAYERS ──────────────────────────────── */}
+      <div className="fixed top-0 left-0 w-full h-full z-0 pointer-events-none overflow-hidden">
+        {/* Core indigo nebula */}
+        <div
+          style={{
+            position: "absolute",
+            top: "10%",
+            left: "30%",
+            width: "80vw",
+            height: "80vh",
+            background:
+              "radial-gradient(ellipse at center, rgba(99,102,241,0.18) 0%, rgba(139,92,246,0.1) 35%, transparent 70%)",
+            filter: "blur(80px)",
+            transform: "rotate(-15deg)",
+          }}
+        />
+        {/* Fuchsia / violet arm */}
+        <div
+          style={{
+            position: "absolute",
+            top: "5%",
+            left: "-10%",
+            width: "70vw",
+            height: "60vh",
+            background:
+              "radial-gradient(ellipse at center, rgba(192,132,252,0.15) 0%, rgba(167,139,250,0.08) 40%, transparent 70%)",
+            filter: "blur(100px)",
+            transform: "rotate(20deg)",
+          }}
+        />
+        {/* Cyan edge */}
+        <div
+          style={{
+            position: "absolute",
+            top: "40%",
+            right: "-15%",
+            width: "60vw",
+            height: "50vh",
+            background:
+              "radial-gradient(ellipse at center, rgba(34,211,238,0.1) 0%, rgba(59,130,246,0.07) 40%, transparent 70%)",
+            filter: "blur(90px)",
+            transform: "rotate(-30deg)",
+          }}
+        />
+        {/* Pink lower arm */}
+        <div
+          style={{
+            position: "absolute",
+            bottom: "5%",
+            left: "20%",
+            width: "65vw",
+            height: "45vh",
+            background:
+              "radial-gradient(ellipse at center, rgba(244,114,182,0.1) 0%, rgba(216,180,254,0.06) 40%, transparent 70%)",
+            filter: "blur(110px)",
+            transform: "rotate(10deg)",
+          }}
+        />
+        {/* Emerald mid-nebula */}
+        <div
+          style={{
+            position: "absolute",
+            top: "60%",
+            left: "5%",
+            width: "45vw",
+            height: "40vh",
+            background:
+              "radial-gradient(ellipse at center, rgba(16,185,129,0.08) 0%, transparent 70%)",
+            filter: "blur(80px)",
+          }}
+        />
+        {/* Dense core bright spot */}
+        <div
+          style={{
+            position: "absolute",
+            top: "20%",
+            left: "45%",
+            width: "30vw",
+            height: "30vw",
+            background:
+              "radial-gradient(circle, rgba(129,140,248,0.22) 0%, rgba(99,102,241,0.08) 50%, transparent 70%)",
+            filter: "blur(60px)",
+          }}
+        />
       </div>
 
       <div className="relative z-10">
+        {/* ══════════════════════════════════════════════════════════
+            SECTION 1: NAVIGATION
+        ══════════════════════════════════════════════════════════ */}
+        <motion.nav
+          initial={{ y: -60, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ duration: 0.6, ease: "easeOut" }}
+          className="fixed top-0 left-0 right-0 z-50 transition-all duration-500"
+          style={{
+            background: activeNav ? "rgba(6,6,16,0.85)" : "transparent",
+            backdropFilter: activeNav ? "blur(20px)" : "none",
+            borderBottom: activeNav
+              ? "1px solid rgba(255,255,255,0.05)"
+              : "none",
+          }}
+        >
+          <div className="flex items-center justify-between px-4 sm:px-6 py-4 max-w-7xl mx-auto">
+            {/* Logo */}
+            <div className="flex items-center gap-3">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 35 35"
+                className="w-8 h-8 flex-shrink-0"
+              >
+                {[
+                  { color: "#10B981" },
+                  { color: "#8b5cf6" },
+                  { color: "#3b82f6" },
+                ].map((s, i) => (
+                  <rect
+                    key={i}
+                    width="13"
+                    height="13"
+                    rx="3"
+                    fill={s.color}
+                    transform={`translate(${i === 1 ? 16 : 0}, ${i === 2 ? 16 : 0})`}
+                  />
+                ))}
+              </svg>
+              <span
+                className="text-lg font-black tracking-[0.2em]"
+                style={{
+                  background: "linear-gradient(90deg,#fff,#a5b4fc)",
+                  WebkitBackgroundClip: "text",
+                  WebkitTextFillColor: "transparent",
+                }}
+              >
+                LUX PH
+              </span>
+            </div>
 
-        <nav className="flex items-center justify-between px-4 sm:px-6 py-6 max-w-7xl mx-auto flex-wrap gap-4">
-          <div className="flex items-center">
-            <motion.svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 35 35"
-              className="w-10 h-10 ml-1 mr-4"
-            >
-              <defs>
-                <path id="snake-path" d="M 0 0 L 0 20 Q 0 24 4 24 L 20 20 L 20 0 Q 20 -4 16 -4 Z" fill="none" />
-              </defs>
-
+            {/* Nav links */}
+            <div className="hidden lg:flex items-center gap-8 text-[11px] font-semibold uppercase tracking-widest text-gray-400">
               {[
-                { delay: 1.60, color: "#10B981", id: "blk-1" },
-                { delay: 0.8, color: "#8b5cf6", id: "blk-2" },
-                { delay: 0, color: "#3b82f6", id: "blk-accent" },
-              ].map((segment) => (
-                <motion.rect
-                  key={segment.id}
-                  initial={{ opacity: 0 }}
-                  animate={{
-                    opacity: [1, 1, 1],
-                    x: [0, 0, 20, 20, 0],
-                    y: [0, 20, 20, 0, 0],
-                    rotate: [0, 90, 0, -90, 0],
-                  }}
-                  transition={{
-                    duration: 3,
-                    ease: "easeInOut",
-                    repeat: Infinity,
-                    delay: segment.delay,
-                    rotate: { type: "spring", stiffness: 300, damping: 20 },
-                  }}
-                  x="0"
-                  y="0"
-                  width="13"
-                  height="13"
-                  rx="3"
-                  fill={segment.color}
-                />
+                { label: "Features", to: "#features" },
+                { label: "MSME Tools", to: "#msme-tools" },
+                { label: "Stellar PH", to: "#stellar-ph" },
+                { label: "On-Chain Ledger", to: "#on-chain-ledger" },
+              ].map((item) => (
+                <a
+                  key={item.label}
+                  href={item.to}
+                  className="hover:text-white transition-colors duration-300 hover:tracking-[0.25em]"
+                >
+                  {item.label}
+                </a>
               ))}
-            </motion.svg>
-            <div className="text-xl font-bold tracking-wider">LUX PH</div>
-          </div>
+            </div>
 
-          <div className="hidden lg:flex items-center gap-8 text-sm font-medium text-gray-300">
-            <a href="#" className="hover:text-white transition-colors">Features</a>
-            <a href="#" className="hover:text-white transition-colors">MSME Tools</a>
-            <a href="#" className="hover:text-white transition-colors">Stellar Integration</a>
-            <a href="#" className="hover:text-white transition-colors">Audit Ledger</a>
+            {/* CTA buttons */}
+            <div className="flex items-center gap-2 sm:gap-3">
+              <Link
+                to="/signin"
+                className="hidden sm:block px-4 py-2 text-xs font-bold tracking-wide text-gray-300 border border-white/10 rounded-lg hover:bg-white/5 transition-all duration-300 whitespace-nowrap"
+              >
+                Merchant Login
+              </Link>
+              <Link
+                to="/signup"
+                className="px-4 py-2 text-xs font-bold tracking-wide bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg transition-all duration-300 shadow-lg shadow-indigo-500/20 whitespace-nowrap"
+              >
+                Create Account
+              </Link>
+            </div>
           </div>
+        </motion.nav>
 
-          <div className="flex items-center gap-3 sm:gap-4 w-full sm:w-auto justify-between sm:justify-end">
-            <Link
-              to="/signin"
-              className="px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium text-white hover:bg-white/10 rounded-md transition-colors border border-white/20 whitespace-nowrap"
-            >
-              Merchant Login
-            </Link>
+        {/* ══════════════════════════════════════════════════════════
+            SECTION 2: HERO
+        ══════════════════════════════════════════════════════════ */}
+        <motion.header
+          ref={heroRef}
+          style={{ opacity: heroOpacity, y: heroY }}
+          className="relative flex flex-col items-center justify-center text-center px-4 pt-32 md:pt-40 pb-24 md:pb-40 max-w-5xl mx-auto"
+        >
+          {/* Announcement pill */}
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3, duration: 0.6 }}
+            className="mb-8 px-4 py-1.5 rounded-full border border-indigo-400/20 text-[11px] font-semibold tracking-widest text-indigo-300 uppercase"
+            style={{
+              background: "rgba(99,102,241,0.08)",
+              backdropFilter: "blur(10px)",
+            }}
+          >
+            ✦ Now Live on Stellar Mainnet ✦
+          </motion.div>
+
+          <motion.h1
+            initial={{ opacity: 0, y: 50, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ delay: 0.4, duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
+            className="text-5xl sm:text-6xl md:text-[5.5rem] font-black tracking-tight mb-8 leading-[1.02]"
+            style={{
+              background:
+                "linear-gradient(160deg, #ffffff 30%, #c4b5fd 65%, #818cf8 100%)",
+              WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent",
+              filter: "drop-shadow(0 0 40px rgba(139,92,246,0.3))",
+            }}
+          >
+            Frictionless
+            <br />
+            On-Chain
+            <br />
+            Payments.
+          </motion.h1>
+
+          <motion.p
+            initial={{ opacity: 0, y: 30 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.65, duration: 0.7 }}
+            className="text-gray-300 text-base sm:text-lg md:text-xl mb-12 max-w-2xl font-medium leading-relaxed"
+          >
+            A premium, non-custodial financial gateway engineered natively on
+            the Stellar Network for Filipino MSMEs. Process digital pesos (PHPC)
+            instantly. Preserve 100% of your revenue flow.
+          </motion.p>
+
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.85, duration: 0.6 }}
+            className="flex flex-col sm:flex-row items-center gap-4"
+          >
             <Link
               to="/signup"
-              className="px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium bg-[#6366f1] hover:bg-[#4f46e5] text-white rounded-md transition-colors shadow-[0_0_15px_rgba(99,102,241,0.3)] hover:shadow-[0_0_20px_rgba(99,102,241,0.5)] whitespace-nowrap"
+              className="w-full sm:w-auto flex items-center justify-center gap-3 px-8 py-4 rounded-xl text-base font-bold tracking-wide transition-all duration-300 group"
+              style={{
+                background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+                boxShadow:
+                  "0 0 40px rgba(99,102,241,0.4), inset 0 1px 0 rgba(255,255,255,0.15)",
+              }}
             >
-              Create Account
+              Start Accepting Payments
+              <ArrowRight className="w-4 h-4 transition-transform duration-300 group-hover:translate-x-1" />
             </Link>
-          </div>
-        </nav>
-
-        <header className="flex flex-col items-center justify-center text-center px-4 pt-12 md:pt-20 pb-20 md:pb-32 max-w-4xl mx-auto relative">
-          <Sparkles className="hidden sm:block absolute top-10 left-10 text-white/10 w-16 h-16 pointer-events-none" />
-          <h1 className="text-4xl sm:text-5xl md:text-7xl font-extrabold tracking-tight mb-6 leading-[1.15] md:leading-[1.1]">
-            Zero-Fee Payments <br /> for Filipino <br /> MSMEs.
-          </h1>
-          <p className="text-gray-400 text-base sm:text-lg mb-10 max-w-xl relative">
-            A premium, non-custodial payment gateway built natively on the Stellar Network. Accept digital pesos (PHPC) instantly and keep 100% of your revenue.
-            <Sparkles className="hidden sm:block absolute -bottom-10 -right-10 text-white/10 w-12 h-12 pointer-events-none" />
-          </p>
-          <button className="w-full sm:w-auto px-8 py-3 bg-[#6366f1] hover:bg-[#4f46e5] text-white rounded-lg text-base sm:text-lg font-medium transition-all shadow-[0_0_20px_rgba(99,102,241,0.4)] hover:shadow-[0_0_30px_rgba(99,102,241,0.6)] hover:-translate-y-0.5">
-            Start Accepting Payments
-          </button>
-        </header>
-
-        <section className="max-w-7xl mx-auto px-4 sm:px-6 pb-20 md:pb-32 relative">
-          <div className="absolute inset-0 bg-[#0a0a0f] [mask-image:radial-gradient(ellipse_at_center,transparent_20%,black)] opacity-40 z-0"></div>
-          <motion.div
-            initial="hidden"
-            whileInView="show"
-            viewport={{ once: true, margin: "-50px" }}
-            variants={{
-              hidden: { opacity: 0 },
-              show: {
-                opacity: 1,
-                transition: { staggerChildren: 0.15 }
-              }
-            }}
-            className="grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10"
-          >
-            <motion.div
-              variants={{
-                hidden: { opacity: 0, y: 30 },
-                show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 200, damping: 20 } }
+            <Link
+              to="/api-documentation"
+              className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-4 rounded-xl text-sm font-semibold text-gray-300 border border-white/10 hover:border-white/20 hover:text-white transition-all duration-300"
+              style={{
+                backdropFilter: "blur(10px)",
+                background: "rgba(255,255,255,0.03)",
               }}
-              className="bg-white/[0.02] backdrop-blur-sm border border-white/5 p-6 sm:p-8 rounded-2xl hover:bg-white/[0.04] hover:border-[#6366f1]/30 hover:shadow-[0_0_30px_rgba(99,102,241,0.1)] transition-all duration-300 group"
             >
-              <div className="w-12 h-12 bg-gradient-to-br from-[#10B981]/20 to-[#047857]/20 rounded-full flex items-center justify-center mb-6 border border-white/10 group-hover:border-[#10B981]/50 transition-colors">
-                <Percent className="text-[#10B981] w-6 h-6" />
-              </div>
-              <h3 className="text-xl sm:text-2xl font-bold mb-3 text-white group-hover:text-[#10B981] transition-colors">0% Transaction Fees</h3>
-              <p className="text-gray-400 text-sm mb-6 leading-relaxed">
-                Stop losing 3% to traditional payment gateways. By leveraging the Stellar Network's minimal network costs, we eliminate the middleman tax entirely.
-              </p>
-            </motion.div>
-
-            <motion.div
-              variants={{
-                hidden: { opacity: 0, y: 30 },
-                show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 200, damping: 20 } }
-              }}
-              className="bg-white/[0.02] backdrop-blur-sm border border-white/5 p-6 sm:p-8 rounded-2xl hover:bg-white/[0.04] hover:border-[#6366f1]/30 hover:shadow-[0_0_30px_rgba(99,102,241,0.1)] transition-all duration-300 group"
-            >
-              <div className="w-12 h-12 bg-gradient-to-br from-[#6366f1]/20 to-[#c084fc]/20 rounded-full flex items-center justify-center mb-6 border border-white/10 group-hover:border-[#6366f1]/50 transition-colors">
-                <Zap className="text-[#818cf8] w-6 h-6" />
-              </div>
-              <h3 className="text-xl sm:text-2xl font-bold mb-3 text-white group-hover:text-[#818cf8] transition-colors">5-Second Settlement</h3>
-              <p className="text-gray-400 text-sm mb-6 leading-relaxed">
-                No more waiting 1 to 3 business days for your funds to clear. Payments settle directly to your non-custodial Stellar wallet in just 5 seconds.
-              </p>
-            </motion.div>
-
-            <motion.div
-              variants={{
-                hidden: { opacity: 0, y: 30 },
-                show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 200, damping: 20 } }
-              }}
-              className="bg-white/[0.02] backdrop-blur-sm border border-white/5 p-6 sm:p-8 rounded-2xl hover:bg-white/[0.04] hover:border-[#6366f1]/30 hover:shadow-[0_0_30px_rgba(99,102,241,0.1)] transition-all duration-300 group"
-            >
-              <div className="w-12 h-12 bg-gradient-to-br from-[#F59E0B]/20 to-[#D97706]/20 rounded-full flex items-center justify-center mb-6 border border-white/10 group-hover:border-[#F59E0B]/50 transition-colors">
-                <ShieldCheck className="text-[#FBBF24] w-6 h-6" />
-              </div>
-              <h3 className="text-xl sm:text-2xl font-bold mb-3 text-white group-hover:text-[#FBBF24] transition-colors">Strictly Non-Custodial</h3>
-              <p className="text-gray-400 text-sm mb-6 leading-relaxed">
-                We provide the reporting dashboard, but you own the private keys. We never hold, freeze, or access your business capital.
-              </p>
-            </motion.div>
+              View Architecture
+            </Link>
           </motion.div>
-        </section>
 
-        <section className="max-w-7xl mx-auto px-4 sm:px-6 pb-20 md:pb-32">
+          {/* Stat strip */}
           <motion.div
-            initial={{ opacity: 0, y: 40 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, margin: "-100px" }}
-            transition={{ duration: 0.8, ease: "easeOut" }}
-            className="flex flex-col lg:flex-row items-center justify-between gap-12 mt-10 relative"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 1.1, duration: 0.8 }}
+            className="mt-16 flex flex-wrap items-center justify-center gap-8 md:gap-12"
           >
-            <div className="w-full lg:w-1/2 flex justify-center relative items-center min-h-[320px] md:min-h-[400px]">
-              <motion.div
-                animate={{
-                  y: [-15, 15, -15],
-                  scale: [1, 1.03, 1],
-                }}
-                transition={{ repeat: Infinity, duration: 6, ease: "easeInOut" }}
-                className="relative z-10 flex flex-col items-center justify-center bg-[#0F172A]/80 backdrop-blur-md border border-[#818cf8]/30 rounded-full w-48 h-48 sm:w-56 sm:h-56 shadow-[0_0_60px_rgba(99,102,241,0.3)]"
-              >
-                <Orbit className="text-[#818cf8] w-20 h-20 sm:w-24 sm:h-24 mb-2" strokeWidth={1} />
-                <span className="text-[10px] font-semibold tracking-[0.2em] text-[#c084fc] uppercase">Network Node</span>
-                <motion.div
-                  animate={{ rotate: 360 }}
-                  transition={{ duration: 5, repeat: Infinity, ease: "linear" }}
-                  className="absolute inset-2 rounded-full border border-dashed border-[#818cf8]/20"
-                />
-              </motion.div>
-
-              {[...Array(3)].map((_, i) => (
-                <motion.div
-                  key={i}
-                  className="absolute z-20 w-10 h-10 sm:w-12 sm:h-12 bg-[#12121a] border border-[#10B981]/40 rounded-full flex items-center justify-center font-bold text-[#10B981] shadow-[0_0_15px_rgba(16,185,129,0.2)]"
+            {[
+              { label: "Processing Fee", value: "0%" },
+              { label: "Settlement Time", value: "~5s" },
+              { label: "Uptime SLA", value: "99.9%" },
+            ].map((stat) => (
+              <div key={stat.label} className="text-center">
+                <div
+                  className="text-3xl font-black mb-1"
                   style={{
-                    originX: "50%",
-                    originY: "50%",
-                  }}
-                  animate={{
-                    rotate: [0, 360],
-                  }}
-                  transition={{
-                    duration: 10 + i * 2,
-                    repeat: Infinity,
-                    ease: "linear",
-                    delay: i * -3,
+                    background: "linear-gradient(135deg,#10b981,#34d399)",
+                    WebkitBackgroundClip: "text",
+                    WebkitTextFillColor: "transparent",
                   }}
                 >
-                  <motion.span
-                    animate={{ rotate: [0, -360] }}
-                    transition={{ duration: 10 + i * 2, repeat: Infinity, ease: "linear", delay: i * -3 }}
-                  >
-                    ₱
-                  </motion.span>
-                  <div className="absolute inset-0 rounded-full bg-[#10B981]/5 blur-sm" />
-                </motion.div>
-              ))}
+                  {stat.value}
+                </div>
+                <div className="text-[11px] text-gray-500 font-semibold uppercase tracking-widest">
+                  {stat.label}
+                </div>
+              </div>
+            ))}
+          </motion.div>
+        </motion.header>
 
-              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center pointer-events-none z-0">
-                <motion.div
-                  animate={{ rotate: 360 }}
-                  transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
-                  className="absolute w-[280px] h-[280px] sm:w-[320px] sm:h-[320px] md:w-[400px] md:h-[400px] border border-[#818cf8]/20 rounded-full border-dashed"
-                />
-                <motion.div
-                  animate={{ rotate: -360 }}
-                  transition={{ duration: 40, repeat: Infinity, ease: "linear" }}
-                  className="absolute w-[350px] h-[350px] sm:w-[400px] sm:h-[400px] md:w-[500px] md:h-[500px] border border-[#c084fc]/10 rounded-full"
-                />
+        {/* ══════════════════════════════════════════════════════════
+            SECTION 3: LUX IN ASTRONOMY
+        ══════════════════════════════════════════════════════════ */}
+        <motion.section
+          id="features"
+          initial="hidden"
+          whileInView="visible"
+          viewport={{ once: true, margin: "-80px" }}
+          variants={stagger}
+          className="max-w-7xl mx-auto px-4 sm:px-6 pb-20 md:pb-32"
+        >
+          <motion.div
+            variants={fadeUp}
+            className="relative rounded-3xl overflow-hidden p-8 md:p-14 border border-white/5"
+            style={{
+              background:
+                "linear-gradient(135deg, rgba(99,102,241,0.06) 0%, rgba(139,92,246,0.04) 50%, rgba(6,6,16,0.8) 100%)",
+              backdropFilter: "blur(20px)",
+              boxShadow: "inset 0 1px 0 rgba(255,255,255,0.05)",
+            }}
+          >
+            {/* Decorative nebula inside the card */}
+            <div
+              className="absolute top-0 right-0 w-1/2 h-full pointer-events-none opacity-40"
+              style={{
+                background:
+                  "radial-gradient(ellipse at top right, rgba(139,92,246,0.3) 0%, transparent 70%)",
+              }}
+            />
+            <div
+              className="absolute bottom-0 left-0 w-1/3 h-1/2 pointer-events-none opacity-20"
+              style={{
+                background:
+                  "radial-gradient(ellipse at bottom left, rgba(34,211,238,0.3) 0%, transparent 70%)",
+              }}
+            />
+
+            <div className="relative z-10 flex flex-col md:flex-row items-center gap-10 md:gap-16">
+              {/* Lux symbol */}
+              <div
+                className="flex-shrink-0 w-24 h-24 md:w-32 md:h-32 rounded-full flex items-center justify-center border border-violet-500/30"
+                style={{
+                  background:
+                    "radial-gradient(circle, rgba(139,92,246,0.25) 0%, rgba(6,6,16,0.5) 100%)",
+                  boxShadow:
+                    "0 0 60px rgba(139,92,246,0.3), inset 0 0 30px rgba(139,92,246,0.1)",
+                }}
+              >
+                <span
+                  className="text-4xl md:text-5xl font-black"
+                  style={{
+                    background: "linear-gradient(135deg,#c4b5fd,#818cf8)",
+                    WebkitBackgroundClip: "text",
+                    WebkitTextFillColor: "transparent",
+                  }}
+                >
+                  lx
+                </span>
               </div>
 
-              <FloatingNode x="10%" y="20%" size={2} delay={0.5} />
-              <FloatingNode x="80%" y="15%" size={1.5} delay={1.2} />
-              <FloatingNode x="90%" y="70%" size={2.5} delay={0.1} />
-              <FloatingNode x="15%" y="85%" size={1.8} delay={0.9} />
-            </div>
-
-            <div className="w-full lg:w-1/2 z-10 relative text-left">
-              <Sparkles className="hidden sm:block absolute -top-16 -left-10 text-white/5 w-20 h-20 pointer-events-none" />
-              <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold mb-6 leading-tight">
-                Real-time <br />
-                <span className="bg-clip-text text-transparent bg-gradient-to-r from-[#818cf8] to-[#c084fc]">
-                  audit verification
-                </span> <br />
-                via Stellar Horizon
-              </h2>
-              <p className="text-gray-400 text-base sm:text-lg mb-8 max-w-xl leading-relaxed">
-                Our Firebase-powered reconciliation engine monitors the Stellar Horizon API in real-time. We link your Web2 invoices directly to immutable on-chain transaction hashes. We provide the UI, you own the truth.
-              </p>
-              <button className="w-full sm:w-auto relative inline-flex items-center justify-center px-8 py-3 text-sm font-medium text-white bg-white/5 border border-white/10 rounded-lg hover:bg-white/10 hover:border-[#818cf8]/50 hover:text-[#818cf8] transition-all duration-300 backdrop-blur-sm group cursor-pointer shadow-[0_0_15px_rgba(0,0,0,0.5)] hover:shadow-[0_0_20px_rgba(99,102,241,0.2)]">
-                View System Architecture
-                <span className="ml-2 transition-transform duration-300 group-hover:translate-x-1">→</span>
-              </button>
+              <div className="text-center md:text-left">
+                <p className="text-[10px] uppercase font-bold tracking-[0.35em] text-violet-400 mb-3">
+                  Our Cosmic Inspiration
+                </p>
+                <h2 className="text-2xl sm:text-3xl md:text-4xl font-black mb-5 leading-tight">
+                  Lux PH: Named after the SI unit of Illuminance.
+                </h2>
+                <p className="text-gray-400 text-sm md:text-base leading-relaxed max-w-2xl">
+                  In astronomy,{" "}
+                  <span className="text-violet-300 font-semibold">
+                    Lux (lx)
+                  </span>{" "}
+                  is the SI unit of Illuminance — the total luminous flux per
+                  unit area, measuring how intensely light flows across a
+                  surface. One lux equals one lumen per square meter: absolute
+                  clarity defined by photon velocity. Like light itself, digital
+                  payment flows must be fast, constant, and inherently
+                  decentralized. We chose this metric to define our velocity.
+                </p>
+                <div className="mt-6 flex flex-wrap justify-center md:justify-start gap-4 text-xs font-mono">
+                  {[
+                    "1 lx = 1 lm / m²",
+                    "Speed: 299,792 km/s",
+                    "Quantum Finality",
+                  ].map((tag) => (
+                    <span
+                      key={tag}
+                      className="px-3 py-1 rounded-full border border-violet-500/20 text-violet-400"
+                      style={{ background: "rgba(139,92,246,0.07)" }}
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              </div>
             </div>
           </motion.div>
-        </section>
+        </motion.section>
 
-        <section className="max-w-5xl mx-auto px-4 sm:px-6 pb-20 md:pb-32 relative">
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] sm:w-[600px] h-[300px] bg-[#6366f1]/5 blur-[120px] rounded-full opacity-50 z-0" />
-          <div className="text-center mb-12 relative z-10">
-            <h2 className="text-3xl sm:text-4xl font-bold mb-6">How we beat the<br />traditional gateways.</h2>
-          </div>
-
-          <div className="bg-[#12121a]/80 backdrop-blur-md rounded-2xl border border-white/5 overflow-x-auto relative z-10 shadow-[0_20px_50px_rgba(0,0,0,0.5)] -webkit-overflow-scrolling: touch;">
-            <div className="min-w-[600px]">
-              <div className="flex items-center justify-between p-6 border-b border-white/10 bg-white/[0.03] text-sm font-semibold text-gray-400 uppercase tracking-wider">
-                <div className="w-1/3">Feature</div>
-                <div className="w-1/3 text-center">Traditional Gateways</div>
-                <div className="w-1/3 text-right text-[#818cf8]">Lux PH</div>
-              </div>
-
-              {[
-                { feature: "Transaction Fees", trad: "2.5% - 3.5%", lux: "₱0 (You keep 100%)", highlight: true },
-                { feature: "Settlement Time", trad: "1 - 3 Business Days", lux: "5 Seconds", highlight: true },
-                { feature: "Fund Custody", trad: "Custodial (They hold it)", lux: "Non-Custodial", highlight: false },
-                { feature: "Audit Transparency", trad: "Closed Internal Database", lux: "Public Stellar Ledger", highlight: false },
-              ].map((row, i) => (
-                <div key={i} className="flex items-center justify-between p-6 border-b border-white/5 last:border-0 hover:bg-white/[0.02] transition-colors group">
-                  <div className="w-1/3 font-semibold text-white group-hover:text-[#818cf8] transition-colors">{row.feature}</div>
-                  <div className="w-1/3 text-center text-gray-400 font-medium">{row.trad}</div>
-                  <div className={`w-1/3 text-right font-bold flex items-center justify-end gap-2 ${row.highlight ? 'text-[#10B981]' : 'text-white'}`}>
-                    {row.highlight && <CheckCircle2 size={16} className="text-[#10B981] flex-shrink-0" />}
-                    <span className="truncate">{row.lux}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        <section className="max-w-7xl mx-auto px-4 sm:px-6 pb-20 md:pb-32 flex flex-col lg:flex-row items-center justify-between relative gap-12">
-          <div className="absolute bottom-0 left-10 text-white/5 w-24 h-24 pointer-events-none" />
-          <div className="w-full lg:w-1/2 z-10 relative text-left">
-            <motion.div
-              animate={{ x: [0, 10, 0] }}
-              transition={{ repeat: Infinity, duration: 4, ease: "easeInOut" }}
-              className="hidden sm:block absolute -top-12 -left-8 w-20 h-20 border-l-2 border-t-2 border-[#6366f1]/20 rounded-tl-xl"
-            />
-            <h2 className="text-4xl sm:text-5xl font-bold mb-6 leading-tight">Scale your business<br />with borderless<br />digital payments.</h2>
-            <p className="text-gray-400 mb-8 max-w-md">
-              Stop letting gateway fees eat into your margins. Join the financial revolution built explicitly for Filipino MSMEs on the Stellar Network and take back control of your revenue flow.
+        {/* ══════════════════════════════════════════════════════════
+            SECTION 4: MSME FEATURE CARDS
+        ══════════════════════════════════════════════════════════ */}
+        <motion.section
+          id="msme-tools"
+          initial="hidden"
+          whileInView="visible"
+          viewport={{ once: true, margin: "-80px" }}
+          variants={stagger}
+          className="max-w-7xl mx-auto px-4 sm:px-6 pb-20 md:pb-32"
+        >
+          <motion.div variants={fadeUp} className="text-center mb-14">
+            <p className="text-[10px] uppercase font-bold tracking-[0.35em] text-indigo-400 mb-3">
+              Why LUX PH
             </p>
-            <p className="text-xs text-gray-500 font-mono mb-4">
-              * Current Platform Sandbox Limit: ₱{freeCapLimit.toLocaleString()} PHP
-            </p>
-            <button className="w-full sm:w-auto px-8 py-3 bg-[#6366f1] hover:bg-[#4f46e5] shadow-[0_0_20px_rgba(99,102,241,0.4)] hover:shadow-[0_0_30px_rgba(99,102,241,0.6)] text-white rounded-lg font-medium transition-all hover:-translate-y-0.5">
-              Deploy Your Merchant Dashboard
-            </button>
-          </div>
-          <div className="w-full lg:w-1/2 flex justify-center lg:justify-end relative min-h-[320px] md:min-h-[350px] items-center">
-            <motion.div
-              animate={{ y: [-10, 10, -10] }}
-              transition={{ repeat: Infinity, duration: 5, ease: "easeInOut" }}
-              className="bg-[#0F172A]/90 border border-white/10 rounded-xl p-6 w-full max-w-sm z-10 shadow-2xl relative"
-            >
-              <div className="flex items-center justify-between mb-4 border-b border-white/10 pb-4">
-                <div className="text-sm font-semibold text-white">Latest Transaction (PHPC)</div>
-                <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-[#10B981] animate-pulse"></span>
-                  <span className="text-xs text-[#10B981]">Verified</span>
-                </div>
-              </div>
-              <div className="space-y-3 font-mono text-xs text-gray-400">
-                <div className="flex justify-between"><span>Amount:</span> <span className="text-white font-bold">₱ 1,250.00 PHPC</span></div>
-                <div className="flex justify-between"><span>From:</span> <span className="text-[#818cf8]">G...5R2z</span></div>
-                <div className="flex justify-between"><span>To:</span> <span className="text-[#10B981]">G...LuxP</span></div>
-                <div className="flex justify-between text-[10px]"><span>Hash:</span> <span className="text-gray-600">8ae3...f4b1</span></div>
-              </div>
+            <h2 className="text-3xl md:text-5xl font-black leading-tight tracking-tight">
+              Built for Filipino MSMEs.
+              <br className="hidden md:block" /> Not for banks.
+            </h2>
+          </motion.div>
 
-              {ledgerElements.map((el, i) => (
-                <motion.div
-                  key={i}
-                  className="absolute bg-[#10B981]/10 rounded h-1"
-                  style={{
-                    width: el.width,
-                    left: el.left,
-                    bottom: `${-20 - i * 15}px`,
-                  }}
-                  animate={{ x: [0, 30, 0], opacity: [0.3, 0.7, 0.3] }}
-                  transition={{ duration: 3 + i, repeat: Infinity, ease: "easeInOut", delay: i * 0.5 }}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 md:gap-6">
+            {[
+              {
+                Icon: Percent,
+                gradient: "from-emerald-500/15 to-teal-500/10",
+                glow: "rgba(16,185,129,0.15)",
+                textColor: "text-emerald-400",
+                border: "rgba(16,185,129,0.2)",
+                title: "0% Processing Fees",
+                desc: "Traditional gateways seize 3% of your growth. We execute native Stellar transactions, eradicating transaction costs so MSMEs capture 100% of revenue.",
+                tag: "Zero Cost",
+              },
+              {
+                Icon: Zap,
+                gradient: "from-indigo-500/15 to-violet-500/10",
+                glow: "rgba(99,102,241,0.2)",
+                textColor: "text-indigo-400",
+                border: "rgba(99,102,241,0.25)",
+                title: "5-Second Settlement",
+                desc: "No multi-day banking clearance delays. Digital assets (PHPC) are cryptographically verified and available in your secure on-chain wallet in microseconds.",
+                tag: "Instant Final",
+              },
+              {
+                Icon: ShieldCheck,
+                gradient: "from-amber-500/15 to-orange-500/10",
+                glow: "rgba(245,158,11,0.15)",
+                textColor: "text-amber-400",
+                border: "rgba(245,158,11,0.2)",
+                title: "Strictly Non-Custodial",
+                desc: "Lux PH provides the analytical dashboard, but you own the absolute keys to your capital. Funds move directly between peer wallets, secured by cryptography.",
+                tag: "You Own It",
+              },
+            ].map((f, i) => (
+              <motion.div
+                key={i}
+                variants={fadeUp}
+                whileHover={{
+                  y: -6,
+                  transition: { type: "spring", stiffness: 300 },
+                }}
+                className={`relative rounded-2xl p-8 border overflow-hidden group cursor-default`}
+                style={{
+                  borderColor: f.border,
+                  background: `linear-gradient(135deg, rgba(6,6,16,0.9) 0%, rgba(6,6,16,0.7) 100%)`,
+                  boxShadow: `0 0 0 0 ${f.glow}`,
+                  transition: "box-shadow 0.4s ease",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.boxShadow = `0 20px 60px ${f.glow}`;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.boxShadow = `0 0 0 0 ${f.glow}`;
+                }}
+              >
+                {/* Gradient bg */}
+                <div
+                  className={`absolute inset-0 bg-gradient-to-br ${f.gradient} opacity-0 group-hover:opacity-100 transition-opacity duration-500`}
                 />
-              ))}
+
+                <div className="relative z-10">
+                  <div className="flex items-start justify-between mb-8">
+                    <div
+                      className="w-12 h-12 rounded-xl flex items-center justify-center border"
+                      style={{ background: `${f.glow}`, borderColor: f.border }}
+                    >
+                      <f.Icon className={`${f.textColor} w-6 h-6`} />
+                    </div>
+                    <span
+                      className={`text-[10px] font-bold tracking-widest uppercase px-2.5 py-1 rounded-full ${f.textColor}`}
+                      style={{
+                        background: `${f.glow}`,
+                        border: `1px solid ${f.border}`,
+                      }}
+                    >
+                      {f.tag}
+                    </span>
+                  </div>
+                  <h3 className="text-xl font-extrabold mb-4 text-white">
+                    {f.title}
+                  </h3>
+                  <p className="text-gray-400 text-sm leading-relaxed">
+                    {f.desc}
+                  </p>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </motion.section>
+
+        {/* ══════════════════════════════════════════════════════════
+            SECTION 5: 3D EARTH + STELLAR HORIZON
+        ══════════════════════════════════════════════════════════ */}
+        <motion.section
+          id="stellar-ph"
+          initial="hidden"
+          whileInView="visible"
+          viewport={{ once: true, margin: "-80px" }}
+          variants={stagger}
+          className="max-w-7xl mx-auto px-4 sm:px-6 pb-20 md:pb-32"
+        >
+          <div className="flex flex-col lg:flex-row items-center gap-12 lg:gap-20">
+            {/* 3D Earth container */}
+            <motion.div
+              variants={fadeIn}
+              className="w-full lg:w-1/2 flex-shrink-0"
+            >
+              <div
+                className="relative mx-auto"
+                style={{
+                  width: "min(420px, 100%)",
+                  height: "min(420px, 80vw)",
+                }}
+              >
+                {/* Outer glow ring */}
+                <div
+                  className="absolute inset-0 rounded-full pointer-events-none"
+                  style={{
+                    background:
+                      "radial-gradient(circle, rgba(59,130,246,0.15) 0%, rgba(99,102,241,0.08) 50%, transparent 70%)",
+                    filter: "blur(20px)",
+                    transform: "scale(1.2)",
+                  }}
+                />
+                {/* Earth canvas */}
+                <EarthCanvas />
+
+                {/* Animated transaction pings */}
+                {[
+                  { top: "20%", left: "25%", color: "#10B981", delay: 0 },
+                  { top: "55%", left: "65%", color: "#6366f1", delay: 1.5 },
+                  { top: "75%", left: "35%", color: "#f59e0b", delay: 3 },
+                ].map((ping, i) => (
+                  <motion.div
+                    key={i}
+                    className="absolute pointer-events-none"
+                    style={{ top: ping.top, left: ping.left }}
+                    initial={{ opacity: 0, scale: 0 }}
+                    animate={{ opacity: [0, 1, 0], scale: [0, 1.5, 0] }}
+                    transition={{
+                      duration: 2.5,
+                      repeat: Infinity,
+                      delay: ping.delay,
+                      ease: "easeOut",
+                    }}
+                  >
+                    <div
+                      className="w-3 h-3 rounded-full"
+                      style={{
+                        background: ping.color,
+                        boxShadow: `0 0 12px ${ping.color}`,
+                      }}
+                    />
+                  </motion.div>
+                ))}
+              </div>
             </motion.div>
 
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-[#10B981]/10 blur-[80px] rounded-full z-0" />
-            <Sparkles className="hidden sm:block absolute top-10 right-10 text-[#818cf8]/40 w-10 h-10 animate-pulse" />
-            <Sparkles className="hidden sm:block absolute bottom-10 left-10 text-[#c084fc]/30 w-8 h-8 animate-pulse" />
+            {/* Content */}
+            <motion.div
+              variants={fadeUp}
+              className="w-full lg:w-1/2 text-center lg:text-left"
+            >
+              <p className="text-[10px] uppercase font-bold tracking-[0.35em] text-indigo-400 mb-4">
+                Immutable Auditing
+              </p>
+              <h2 className="text-3xl sm:text-4xl md:text-5xl font-black mb-6 leading-tight tracking-tight">
+                Real-time audit verification via Stellar Horizon.
+              </h2>
+              <p className="text-gray-400 text-base md:text-lg mb-8 leading-relaxed">
+                Our Firebase-powered engine monitors Stellar Horizon streaming
+                defined by on-chain finality. We map standard merchant invoices
+                directly to immutable transaction hashes. Transparency defined
+                by the flow of data.
+              </p>
+
+              {/* Feature mini-list */}
+              <div className="space-y-4 mb-10">
+                {[
+                  {
+                    title: "Horizon API Integration",
+                    desc: "Live streaming from Stellar consensus nodes",
+                  },
+                  {
+                    title: "Invoice ↔ Hash Mapping",
+                    desc: "Every payment linked to an immutable record",
+                  },
+                  {
+                    title: "Public Ledger Proof",
+                    desc: "Verifiable by anyone, anywhere, anytime",
+                  },
+                ].map((item, i) => (
+                  <div key={i} className="flex items-start gap-3">
+                    <div
+                      className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
+                      style={{
+                        background: "rgba(16,185,129,0.15)",
+                        border: "1px solid rgba(16,185,129,0.3)",
+                      }}
+                    >
+                      <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                    </div>
+                    <div>
+                      <span className="text-sm font-semibold text-white">
+                        {item.title}
+                      </span>
+                      <span className="text-sm text-gray-500 ml-2">
+                        — {item.desc}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <Link
+                to="/api-documentation"
+                className="flex items-center justify-center lg:justify-start gap-2 px-7 py-3.5 text-sm font-semibold text-gray-200 border border-white/10 rounded-xl hover:border-indigo-400/40 hover:text-white transition-all duration-300 group w-full sm:w-auto"
+                style={{
+                  backdropFilter: "blur(10px)",
+                  background: "rgba(255,255,255,0.02)",
+                }}
+              >
+                View System Architecture
+                <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform duration-300" />
+              </Link>
+            </motion.div>
+          </div>
+        </motion.section>
+
+        {/* ══════════════════════════════════════════════════════════
+            SECTION 6: COMPARISON TABLE
+        ══════════════════════════════════════════════════════════ */}
+        <motion.section
+          id="on-chain-ledger"
+          initial="hidden"
+          whileInView="visible"
+          viewport={{ once: true, margin: "-80px" }}
+          variants={stagger}
+          className="max-w-5xl mx-auto px-4 sm:px-6 pb-20 md:pb-32"
+        >
+          <motion.div variants={fadeUp} className="text-center mb-14">
+            <p className="text-[10px] uppercase font-bold tracking-[0.35em] text-indigo-400 mb-3">
+              MSME Benefits
+            </p>
+            <h2 className="text-3xl md:text-5xl font-black leading-tight tracking-tight">
+              How we beat traditional gateways.
+            </h2>
+          </motion.div>
+
+          <motion.div
+            variants={fadeUp}
+            className="rounded-2xl border border-white/5 overflow-hidden"
+            style={{
+              background: "rgba(255,255,255,0.01)",
+              backdropFilter: "blur(20px)",
+              boxShadow: "0 40px 80px rgba(0,0,0,0.4)",
+            }}
+          >
+            {/* Header row */}
+            <div
+              className="flex items-center p-5 md:p-7 border-b border-white/8"
+              style={{ background: "rgba(255,255,255,0.02)" }}
+            >
+              <div className="w-[32%] text-[10px] font-bold uppercase tracking-widest text-gray-500">
+                Core Feature
+              </div>
+              <div className="w-[34%] text-center text-[10px] font-bold uppercase tracking-widest text-gray-500">
+                Traditional Gateway
+              </div>
+              <div className="w-[34%] text-right text-[10px] font-bold uppercase tracking-widest text-indigo-400">
+                LUX PH Ecosystem
+              </div>
+            </div>
+
+            {[
+              {
+                feature: "Fees per transaction",
+                trad: "2.5% – 3.5%",
+                lux: "₱0 — Zero Cost",
+                highlight: true,
+              },
+              {
+                feature: "Settlement timeframe",
+                trad: "1 – 3 Banking Days",
+                lux: "Final in ~5 seconds",
+                highlight: true,
+              },
+              {
+                feature: "Capital custody",
+                trad: "Custodial third-party",
+                lux: "Non-Custodial, You Own Keys",
+                highlight: false,
+              },
+              {
+                feature: "Audit transparency",
+                trad: "Private centralized DB",
+                lux: "Public Stellar Ledger",
+                highlight: false,
+              },
+            ].map((row, i) => (
+              <motion.div
+                key={i}
+                initial={{ opacity: 0, x: -20 }}
+                whileInView={{ opacity: 1, x: 0 }}
+                viewport={{ once: true }}
+                transition={{ delay: i * 0.1, duration: 0.5 }}
+                className="flex items-center p-5 md:p-7 border-b border-white/5 last:border-0 group hover:bg-white/[0.015] transition-colors"
+              >
+                <div className="w-[32%] text-sm md:text-base font-semibold text-gray-200 group-hover:text-white transition-colors pr-4">
+                  {row.feature}
+                </div>
+                <div className="w-[34%] text-center text-sm text-gray-500">
+                  {row.trad}
+                </div>
+                <div
+                  className={`w-[34%] text-right flex items-center justify-end gap-2 font-bold text-sm md:text-base ${row.highlight ? "text-emerald-400" : "text-gray-100"}`}
+                >
+                  {row.highlight && (
+                    <CheckCircle2
+                      size={15}
+                      className="flex-shrink-0 text-emerald-400"
+                    />
+                  )}
+                  <span>{row.lux}</span>
+                </div>
+              </motion.div>
+            ))}
+          </motion.div>
+        </motion.section>
+
+        {/* ══════════════════════════════════════════════════════════
+            SECTION 7: CTA + LEDGER VISUAL
+        ══════════════════════════════════════════════════════════ */}
+        <motion.section
+          initial="hidden"
+          whileInView="visible"
+          viewport={{ once: true, margin: "-80px" }}
+          variants={stagger}
+          className="max-w-7xl mx-auto px-4 sm:px-6 pb-20 md:pb-32"
+        >
+          <div className="flex flex-col lg:flex-row items-center gap-14 lg:gap-20">
+            {/* Text */}
+            <motion.div
+              variants={fadeUp}
+              className="w-full lg:w-1/2 text-center lg:text-left"
+            >
+              <p className="text-[10px] uppercase font-bold tracking-[0.35em] text-indigo-400 mb-4">
+                Scale Now
+              </p>
+              <h2 className="text-3xl sm:text-4xl md:text-5xl font-black mb-6 leading-tight tracking-tight">
+                Scale your enterprise with decentralized PHP-PHPC payments.
+              </h2>
+              <p className="text-gray-400 text-base md:text-lg mb-8 leading-relaxed">
+                Terminate standard transactional erosion that minimizes margins.
+                Join the financial velocity engineered for Filipino MSMEs on the
+                Stellar Network.
+              </p>
+              <p
+                className="text-[11px] text-gray-500 font-mono tracking-wider mb-8 inline-block px-4 py-2 rounded-lg border border-white/5"
+                style={{ background: "rgba(255,255,255,0.02)" }}
+              >
+                // Current Platform Sandbox Cap: ₱
+                {freeCapLimit.toLocaleString()} PHPC
+              </p>
+              <div>
+                <Link
+                  to="/signup"
+                  className="w-full sm:w-auto px-10 py-4 rounded-xl text-base font-bold tracking-wide transition-all duration-300 hover:-translate-y-0.5"
+                  style={{
+                    background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+                    boxShadow:
+                      "0 0 40px rgba(99,102,241,0.35), inset 0 1px 0 rgba(255,255,255,0.15)",
+                  }}
+                >
+                  Deploy Your On-Chain Merchant Console
+                </Link>
+              </div>
+            </motion.div>
+
+            {/* Live transaction card */}
+            <motion.div
+              variants={fadeUp}
+              className="w-full lg:w-1/2 flex justify-center lg:justify-end"
+            >
+              <div className="relative w-full max-w-sm">
+                {/* Card glow */}
+                <div
+                  className="absolute -inset-4 rounded-2xl pointer-events-none"
+                  style={{
+                    background:
+                      "radial-gradient(circle, rgba(16,185,129,0.1) 0%, transparent 70%)",
+                    filter: "blur(20px)",
+                  }}
+                />
+
+                <div
+                  className="relative rounded-2xl p-6 border border-white/8"
+                  style={{
+                    background: "rgba(12,12,20,0.95)",
+                    backdropFilter: "blur(20px)",
+                    boxShadow: "0 40px 80px rgba(0,0,0,0.5)",
+                  }}
+                >
+                  {/* Header */}
+                  <div className="flex items-center justify-between mb-5 pb-5 border-b border-white/8">
+                    <div className="text-sm font-semibold text-white">
+                      Latest On-Chain Hash
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"
+                        style={{ boxShadow: "0 0 8px #10B981" }}
+                      />
+                      <span className="text-xs font-bold text-emerald-400">
+                        Final
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Tx data */}
+                  <div
+                    className="space-y-3 font-mono text-[11px] text-gray-400 p-4 rounded-lg border border-white/5"
+                    style={{ background: "rgba(255,255,255,0.01)" }}
+                  >
+                    {[
+                      {
+                        label: "VOLUME",
+                        value: "₱ 1,250.00 PHPC",
+                        color: "text-white font-bold",
+                      },
+                      {
+                        label: "SENDER",
+                        value: "G...5R2z",
+                        color: "text-indigo-400",
+                      },
+                      {
+                        label: "RECIPIENT",
+                        value: "G...LuxP",
+                        color: "text-emerald-400",
+                      },
+                      {
+                        label: "BLOCK HASH",
+                        value: "8ae3...f4b1",
+                        color: "text-gray-600 text-[10px]",
+                      },
+                    ].map((row) => (
+                      <div
+                        key={row.label}
+                        className="flex justify-between items-center"
+                      >
+                        <span>{row.label}:</span>
+                        <span className={row.color}>{row.value}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Decorative ledger lines */}
+                  {ledgerElements.map((el, i) => (
+                    <div
+                      key={i}
+                      className="absolute rounded h-px"
+                      style={{
+                        background: "rgba(16,185,129,0.2)",
+                        width: el.width,
+                        left: el.left,
+                        bottom: `${-10 - i * 12}px`,
+                        opacity: 1 - i * 0.25,
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        </motion.section>
+
+        {/* ══════════════════════════════════════════════════════════
+            SECTION 8: MEET THE DEVELOPERS
+        ══════════════════════════════════════════════════════════ */}
+        <section className="relative z-10 py-24 px-6 overflow-hidden">
+          {/* Ambient blobs */}
+          <div className="pointer-events-none absolute inset-0">
+            <div className="absolute -top-24 -left-16 w-80 h-80 rounded-full bg-violet-600/20 blur-[100px]" />
+            <div className="absolute bottom-[-5rem] right-[10%] w-64 h-64 rounded-full bg-emerald-600/15 blur-[80px]" />
+            <div className="absolute top-[40%] -right-10 w-48 h-48 rounded-full bg-amber-500/10 blur-[70px]" />
+          </div>
+
+          {/* Grid texture */}
+          <div
+            className="pointer-events-none absolute inset-0 opacity-[0.03]"
+            style={{
+              backgroundImage:
+                "linear-gradient(rgba(255,255,255,1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,1) 1px, transparent 1px)",
+              backgroundSize: "40px 40px",
+            }}
+          />
+
+          <div className="relative max-w-6xl mx-auto text-center">
+            {/* Header */}
+            <motion.div
+              initial={{ opacity: 0, y: 30 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.7 }}
+              viewport={{ once: true }}
+              className="mb-16"
+            >
+              <div className="mb-3 flex items-center justify-center gap-3">
+                <span className="h-px w-7 bg-gradient-to-r from-transparent to-violet-500" />
+                <span className="text-[11px] font-medium uppercase tracking-[0.2em] text-violet-400">
+                  the team
+                </span>
+                <span className="h-px w-7 bg-gradient-to-l from-transparent to-violet-500" />
+              </div>
+              <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight text-white mb-4">
+                Meet the{" "}
+                <span className="bg-gradient-to-r from-violet-400 to-sky-400 bg-clip-text text-transparent">
+                  Developers
+                </span>
+              </h2>
+              <p className="text-gray-500 text-lg max-w-xl mx-auto font-light leading-relaxed">
+                The minds behind the platform building futuristic financial
+                experiences.
+              </p>
+            </motion.div>
+
+            {/* Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {developers.map((dev, index) => (
+                <motion.div
+                  key={index}
+                  initial={{ opacity: 0, y: 40 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.6, delay: index * 0.15 }}
+                  viewport={{ once: true }}
+                  whileHover={{ y: -10, scale: 1.02 }}
+                  className={`group relative overflow-hidden rounded-[20px] border border-white/[0.07] bg-white/[0.04] backdrop-blur-xl transition-all duration-300 ${dev.hoverBorder} hover:shadow-2xl`}
+                >
+                  {/* Hover glow overlay */}
+                  <div
+                    className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${dev.glowBg} opacity-0 transition-opacity duration-300 group-hover:opacity-100`}
+                  />
+
+                  <div className="relative z-10 flex flex-col items-center px-6 pb-6 pt-8 text-center">
+                    {/* Card number */}
+                    <span className="absolute right-4 top-4 font-mono text-[11px] font-bold text-white/20">
+                      {dev.number}
+                    </span>
+
+                    {/* Avatar */}
+                    <div className="relative mb-5">
+                      <div
+                        className={`absolute -inset-[3px] rounded-full bg-gradient-to-r ${dev.ring} opacity-50 transition-all duration-300 group-hover:opacity-100 group-hover:scale-110`}
+                      />
+                      <img
+                        src={dev.image}
+                        alt={dev.name}
+                        className="relative z-10 block h-[88px] w-[88px] rounded-full border-[3px] border-[#0a0a12] object-cover"
+                      />
+                      <span className="absolute bottom-1 right-1 z-20 block h-3 w-3 rounded-full border-2 border-[#0a0a12] bg-emerald-400 shadow-[0_0_0_3px_rgba(52,211,153,0.2)]" />
+                    </div>
+
+                    {/* Name */}
+                    <h3 className="mb-2 text-lg font-bold tracking-tight text-white">
+                      {dev.name}
+                    </h3>
+
+                    {/* Role pill */}
+                    <span
+                      className={`mb-4 rounded-full border px-3 py-[3px] text-[11px] font-medium uppercase tracking-widest ${dev.roleCls}`}
+                    >
+                      {dev.role}
+                    </span>
+
+                    {/* Animated divider */}
+                    <div className="relative mb-4 h-px w-full bg-white/[0.07]">
+                      <div
+                        className={`absolute inset-0 origin-left scale-x-0 bg-gradient-to-r ${dev.lineCls} transition-transform duration-500 delay-75 group-hover:scale-x-100`}
+                      />
+                    </div>
+
+                    {/* Skill chips */}
+                    <div className="mb-5 flex flex-wrap justify-center gap-1.5">
+                      {dev.skills.map((skill) => (
+                        <span
+                          key={skill}
+                          className="rounded-full border border-white/[0.08] bg-white/[0.05] px-2.5 py-[3px] text-[10px] font-medium text-gray-400"
+                        >
+                          {skill}
+                        </span>
+                      ))}
+                    </div>
+
+                    {/* Social icons */}
+                    <div className="flex gap-2.5 translate-y-2 opacity-0 transition-all duration-300 delay-[50ms] group-hover:translate-y-0 group-hover:opacity-100">
+                      {["github", "linkedin", "twitter"].map((s) => (
+                        <a
+                          key={s}
+                          href="#"
+                          aria-label={s}
+                          className="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/[0.06] text-gray-400 transition-colors hover:bg-white/[0.12] hover:text-white"
+                        >
+                          <svg
+                            viewBox="0 0 24 24"
+                            fill="currentColor"
+                            className="w-4 h-4"
+                          >
+                            {s === "github" && (
+                              <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" />
+                            )}
+                            {s === "linkedin" && (
+                              <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
+                            )}
+                            {s === "twitter" && (
+                              <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.259 5.632L18.244 2.25zm-1.161 17.52h1.833L7.084 4.126H5.117L17.083 19.77z" />
+                            )}
+                          </svg>
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
           </div>
         </section>
 
-        <footer className="border-t border-white/10 pt-16 md:pt-20 pb-10 px-4 sm:px-6 mt-20 relative z-10">
-          <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-12 text-sm text-gray-400">
+        <footer
+          className="border-t border-white/5 pt-16 pb-10 px-4 sm:px-6 relative z-10"
+          style={{
+            background: "rgba(6,6,16,0.8)",
+            backdropFilter: "blur(20px)",
+          }}
+        >
+          <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-12 text-sm text-gray-500">
+            {/* Brand Column */}
             <div>
-              <div className="text-white font-bold mb-4 tracking-wider flex items-center gap-2">
-                <Zap size={18} className="text-[#818cf8]" /> LUX PH
+              <div className="flex items-center gap-2 mb-5">
+                <Zap size={16} className="text-indigo-400" />
+                <span className="text-white font-black tracking-widest text-sm">
+                  LUX PH
+                </span>
               </div>
               <p className="mb-4 text-xs leading-relaxed">
-                Lux PH is a high-velocity settlement engine designed to empower the 1.1 million MSMEs in the Philippines. Built proudly and natively on the Stellar Network.
+                Lux PH defines decentralized on-chain finality engineered
+                specifically to uplift Philippine MSME operations through
+                velocity and custody ownership. Built natively on Stellar rails.
               </p>
-              <p className="text-xs text-gray-600">© 2026 Lux PH · Stellar Hackathon 2026 Entry</p>
+              <p className="text-[11px] text-gray-600 font-mono">
+                © 2026 LUX PH — Stellar Network Gateway
+              </p>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-8 md:col-span-2">
-              <div className="flex flex-col gap-3 text-left">
-                <h4 className="text-white font-semibold mb-2">Platform</h4>
-                <a href="#" className="hover:text-white transition-colors">Merchant Dashboard</a>
-                <a href="#" className="hover:text-white transition-colors">Generate Invoices</a>
-                <a href="#" className="hover:text-white transition-colors">Architecture Whitepaper</a>
-                <a href="#" className="hover:text-white transition-colors">Stellar PHPC Anchor</a>
+            {/* Links Column */}
+            <div className="grid grid-cols-2 gap-8 md:col-span-2">
+              {/* Product Links */}
+              <div className="flex flex-col gap-3">
+                <h4 className="text-xs font-bold text-gray-200 uppercase tracking-widest mb-2">
+                  Product
+                </h4>
+                {footerData.product.map((link) => (
+                  <Link
+                    key={link.label}
+                    to={link.to}
+                    className="hover:text-white transition-colors duration-300 text-xs w-fit"
+                  >
+                    {link.label}
+                  </Link>
+                ))}
               </div>
-              <div className="flex flex-col gap-3 text-left">
-                <h4 className="text-white font-semibold mb-2">Legal & Security</h4>
-                <a href="#" className="hover:text-white transition-colors">Privacy Policy</a>
-                <a href="#" className="hover:text-white transition-colors">Non-Custodial Agreement</a>
-                <a href="#" className="hover:text-white transition-colors">Terms of Service</a>
-                <a href="#" className="hover:text-white transition-colors">Open Source GitHub</a>
+
+              {/* Legal Links */}
+              <div className="flex flex-col gap-3">
+                <h4 className="text-xs font-bold text-gray-200 uppercase tracking-widest mb-2">
+                  Legal
+                </h4>
+                {footerData.legal.map((link) => (
+                  <Link
+                    key={link.label}
+                    to={link.to}
+                    className="hover:text-white transition-colors duration-300 text-xs w-fit"
+                  >
+                    {link.label}
+                  </Link>
+                ))}
               </div>
             </div>
           </div>
         </footer>
-
       </div>
     </div>
   );
