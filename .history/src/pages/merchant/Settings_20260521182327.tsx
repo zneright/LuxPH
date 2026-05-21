@@ -58,12 +58,6 @@ export default function Settings() {
           if (data.stellarPublicKey) {
             setStellarAddress(data.stellarPublicKey);
           }
-          if ((data as any).contingencyConfig) {
-            const cc = (data as any).contingencyConfig;
-            setContingencyPercentage(Number(cc.percentage || 0));
-            setContingencyLockValue(Number(cc.lockValue || 30));
-            setContingencyLockUnit(cc.lockUnit || "days");
-          }
         }
 
         try {

@@ -58,12 +58,6 @@ export default function Settings() {
           if (data.stellarPublicKey) {
             setStellarAddress(data.stellarPublicKey);
           }
-          if ((data as any).contingencyConfig) {
-            const cc = (data as any).contingencyConfig;
-            setContingencyPercentage(Number(cc.percentage || 0));
-            setContingencyLockValue(Number(cc.lockValue || 30));
-            setContingencyLockUnit(cc.lockUnit || "days");
-          }
         }
 
         try {
@@ -120,20 +114,6 @@ export default function Settings() {
     if (user) {
       const userRef = doc(db, "merchants", user.uid);
       await updateDoc(userRef, { stellarPublicKey: "" });
-    }
-  };
-
-  const saveContingencySettings = async () => {
-    if (!user) return alert("Sign in to save contingency settings");
-    try {
-      const userRef = doc(db, "merchants", user.uid);
-      await setDoc(userRef, { contingencyConfig: { percentage: contingencyPercentage, lockValue: contingencyLockValue, lockUnit: contingencyLockUnit } }, { merge: true });
-      alert("Contingency settings saved.");
-      const updated = await getDoc(userRef);
-      if (updated.exists()) setMerchantData(updated.data() as MerchantData);
-    } catch (err) {
-      console.error("Failed to save contingency settings:", err);
-      alert("Failed to save contingency settings.");
     }
   };
 
