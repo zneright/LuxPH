@@ -246,7 +246,7 @@ export default function CashOut() {
       setLoadingMsg("Awaiting Wallet Signature...");
 
       // 3. USING WALLET CONTEXT TO SIGN
-      const signedXdrString = await signTx(transaction.toXDR(), networkConfig.networkPassphrase);
+      const signedXdrString = await signTx(transaction.toXDR(), sysConfig.networkPassphrase);
 
       if (!signedXdrString) {
         throw new Error("Transaction signature cancelled or failed.");

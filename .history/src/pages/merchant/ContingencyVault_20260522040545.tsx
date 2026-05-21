@@ -64,6 +64,7 @@ export default function ContingencyVault() {
     // Security & Session State
     const [secretKey, setSecretKey] = useState<string>("");
     const [isSessionUnlocked, setIsSessionUnlocked] = useState<boolean>(false);
+    const [isAuthenticating, setIsAuthenticating] = useState<boolean>(false);
     const [keyError, setKeyError] = useState("");
 
     // Engine State
@@ -82,6 +83,16 @@ export default function ContingencyVault() {
                         const data = mDoc.data();
                         if (data.vaultConfig) {
                             setConfig(data.vaultConfig);
+                        } else if (data.contingencyConfig) {
+                            const cc = data.contingencyConfig;
+                            setConfig(prev => ({
+                                ...prev,
+                                deductionPercentage: Number(cc.percentage ?? prev.deductionPercentage),
+                                lockDurationDays: Number(cc.lockValue ?? prev.lockDurationDays),
+                                autoRenew: prev.autoRenew,
+                                networkUrl: prev.networkUrl,
+                                targetAsset: prev.targetAsset,
+                            }));
                         }
                     }
                 }
@@ -114,7 +125,6 @@ export default function ContingencyVault() {
 
                 const predicate = record.claimants.find(c => c.destination === pubKey)?.predicate;
 
-                // THE FIX: Correctly read Horizon's text date into JavaScript time
                 if (predicate && predicate.not && predicate.not.abs_before) {
                     unlockTime = new Date(predicate.not.abs_before).getTime();
                 }
@@ -139,24 +149,32 @@ export default function ContingencyVault() {
         } catch (error) {
             console.error("Horizon Sync Error:", error);
             addLog("Failed to synchronize with Horizon ledger.", "warn");
+            throw error; // Throwing error to catch it during the unlock session flow
         } finally {
             setIsSyncing(false);
         }
     };
 
-    const handleUnlockSession = () => {
+    const handleUnlockSession = async () => {
         try {
             setKeyError("");
+            setIsAuthenticating(true);
             const kp = Keypair.fromSecret(secretKey);
+
+            // Wait for Horizon to return all balances and locks first
+            await syncHorizonData(kp);
+
+            // Unlock dashboard only after data has successfully loaded
             setIsSessionUnlocked(true);
-            syncHorizonData(kp);
 
             if (config.isEnabled) {
                 startPaymentListener(kp);
                 addLog("Vault Engine Online. Listening for incoming payments.", "success");
             }
         } catch (err) {
-            setKeyError("Invalid Secret Key. Please check and try again.");
+            setKeyError("Invalid Secret Key or Network Error. Please check and try again.");
+        } finally {
+            setIsAuthenticating(false);
         }
     };
 
@@ -274,7 +292,6 @@ export default function ContingencyVault() {
         }
     };
 
-    // --- NEW: Batch Claim All Mature Funds ---
     const handleClaimAllMature = async () => {
         if (!isSessionUnlocked) return;
 
@@ -283,7 +300,7 @@ export default function ContingencyVault() {
 
         try {
             addLog(`Sweeping ${matureLocks.length} mature allocations...`, "success");
-            setIsSyncing(true); // Show loading state
+            setIsSyncing(true);
 
             const kp = Keypair.fromSecret(secretKey);
             const server = new Horizon.Server(config.networkUrl);
@@ -292,7 +309,6 @@ export default function ContingencyVault() {
 
             let txBuilder = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase });
 
-            // Stellar limits transactions to 100 operations. We take the first 100 mature locks.
             const locksToClaim = matureLocks.slice(0, 100);
 
             locksToClaim.forEach(lock => {
@@ -338,20 +354,19 @@ export default function ContingencyVault() {
         setRecentLogs(prev => [{ id: Math.random().toString(), msg, time: new Date(), type }, ...prev].slice(0, 5));
     };
 
-    // Derived stat for the batch button
     const matureCount = lockedFunds.filter(lock => lock.isUnlockable).length;
 
     return (
         <div style={{ fontFamily: "'Nunito',sans-serif", color: "#fff", padding: "12px", boxSizing: "border-box" }}>
             <style>{`
-        .vault-card { background: rgba(15, 17, 26, 0.6); backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,.06); border-radius: 24px; padding: 32px; }
-        .tab-btn { background: transparent; border: none; color: #9ca3af; font-family: 'Nunito', sans-serif; font-weight: 800; font-size: 15px; padding: 12px 24px; cursor: pointer; transition: 0.3s; position: relative; }
-        .tab-btn.active { color: #f59e0b; }
-        .tab-btn.active::after { content: ''; position: absolute; bottom: 0; left: 20%; right: 20%; height: 3px; background: #f59e0b; border-radius: 3px 3px 0 0; }
-        .stat-box { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.05); padding: 24px; border-radius: 16px; }
-        .styled-input { width: 100%; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,.1); border-radius: 12px; padding: 14px 16px; color: #fff; font-size: 15px; outline: none; transition: all 0.3s; font-family: 'DM Mono', monospace; }
-        .styled-input:focus { border-color: #f59e0b; box-shadow: 0 0 0 2px rgba(245,158,11,0.2); }
-      `}</style>
+            .vault-card { background: rgba(15, 17, 26, 0.6); backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,.06); border-radius: 24px; padding: 32px; }
+            .tab-btn { background: transparent; border: none; color: #9ca3af; font-family: 'Nunito', sans-serif; font-weight: 800; font-size: 15px; padding: 12px 24px; cursor: pointer; transition: 0.3s; position: relative; }
+            .tab-btn.active { color: #f59e0b; }
+            .tab-btn.active::after { content: ''; position: absolute; bottom: 0; left: 20%; right: 20%; height: 3px; background: #f59e0b; border-radius: 3px 3px 0 0; }
+            .stat-box { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.05); padding: 24px; border-radius: 16px; }
+            .styled-input { width: 100%; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,.1); border-radius: 12px; padding: 14px 16px; color: #fff; font-size: 15px; outline: none; transition: all 0.3s; font-family: 'DM Mono', monospace; }
+            .styled-input:focus { border-color: #f59e0b; box-shadow: 0 0 0 2px rgba(245,158,11,0.2); }
+        `}</style>
 
             <div style={{ marginBottom: 32 }}>
                 <h1 style={{ fontSize: 36, fontWeight: 900, margin: 0, letterSpacing: "-0.02em" }}>Contingency Vault</h1>
@@ -372,16 +387,18 @@ export default function ContingencyVault() {
                         placeholder="S..."
                         value={secretKey}
                         onChange={(e) => setSecretKey(e.target.value)}
+                        disabled={isAuthenticating}
                         className="styled-input"
-                        style={{ marginBottom: 12, textAlign: "center", borderColor: keyError ? "#ef4444" : "rgba(255,255,255,0.1)" }}
+                        style={{ marginBottom: 12, textAlign: "center", borderColor: keyError ? "#ef4444" : "rgba(255,255,255,0.1)", opacity: isAuthenticating ? 0.5 : 1 }}
                     />
                     {keyError && <div style={{ color: "#ef4444", fontSize: 12, marginBottom: 16, fontFamily: "'DM Mono', monospace" }}>{keyError}</div>}
 
                     <button
                         onClick={handleUnlockSession}
-                        style={{ width: "100%", background: "linear-gradient(90deg, #f59e0b, #d97706)", color: "#fff", border: "none", borderRadius: 14, padding: "16px", fontWeight: 800, fontSize: 16, cursor: "pointer", boxShadow: "0 8px 25px -6px rgba(245,158,11,0.5)" }}
+                        disabled={isAuthenticating}
+                        style={{ width: "100%", background: isAuthenticating ? "rgba(245, 158, 11, 0.5)" : "linear-gradient(90deg, #f59e0b, #d97706)", color: "#fff", border: "none", borderRadius: 14, padding: "16px", fontWeight: 800, fontSize: 16, cursor: isAuthenticating ? "wait" : "pointer", boxShadow: isAuthenticating ? "none" : "0 8px 25px -6px rgba(245,158,11,0.5)" }}
                     >
-                        Authenticate & Initialize Vault
+                        {isAuthenticating ? "Synchronizing Ledger Data..." : "Authenticate & Initialize Vault"}
                     </button>
                 </motion.div>
             ) : (
@@ -422,7 +439,6 @@ export default function ContingencyVault() {
                                     </div>
                                 </div>
 
-                                {/* NEW: Header with Batch Claim Button */}
                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.1)", paddingBottom: 12, marginBottom: 20 }}>
                                     <h3 style={{ fontSize: 18, fontWeight: 800, margin: 0 }}>Encrypted Allocations</h3>
 

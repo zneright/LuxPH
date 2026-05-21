@@ -95,7 +95,7 @@ export default function CashOut() {
     if (!merchantAddress) return;
     const fetchBalance = async () => {
       try {
-        const server = new Horizon.Server(networkConfig.horizonUrl);
+        const server = new Horizon.Server(sysConfig.horizonUrl);
         const account = await server.loadAccount(merchantAddress);
 
         const balanceObj = account.balances.find((b: any) => {
@@ -110,7 +110,7 @@ export default function CashOut() {
       }
     };
     fetchBalance();
-  }, [merchantAddress, selectedToken, networkConfig.horizonUrl, systemConfig.phpcIssuerAddress, systemConfig.usdcIssuerAddress]);
+  }, [merchantAddress, selectedToken, sysConfig.horizonUrl, sysConfig.phpcIssuer, sysConfig.usdcIssuer]);
 
   const handleTokenAmountChange = (val: string) => {
     setTokenAmount(val);
@@ -178,20 +178,6 @@ export default function CashOut() {
     }
   };
 
-  const validateNetworkConfiguration = async () => {
-    const server = new Horizon.Server(networkConfig.horizonUrl);
-    const root = await server.root();
-
-    if (!root || typeof root.network_passphrase !== 'string') {
-      throw new Error('Unable to validate Horizon network status.');
-    }
-    if (root.network_passphrase !== networkConfig.networkPassphrase) {
-      throw new Error('Horizon network mismatch: configured network does not match Horizon response.');
-    }
-
-    return true;
-  };
-
   const handleCashOut = async () => {
     if (!user) return alert("Please log in to continue.");
     if (!connectedWallet) return alert("Please connect your wallet first.");
@@ -246,7 +232,7 @@ export default function CashOut() {
       setLoadingMsg("Awaiting Wallet Signature...");
 
       // 3. USING WALLET CONTEXT TO SIGN
-      const signedXdrString = await signTx(transaction.toXDR(), networkConfig.networkPassphrase);
+      const signedXdrString = await signTx(transaction.toXDR(), sysConfig.networkPassphrase);
 
       if (!signedXdrString) {
         throw new Error("Transaction signature cancelled or failed.");

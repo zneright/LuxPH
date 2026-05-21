@@ -60,7 +60,6 @@ export default function CreateInvoice() {
   const [loadingMsg, setLoadingMsg] = useState("Initializing dashboard...");
   const [paymentStartTime, setPaymentStartTime] = useState<number | null>(null);
   const streamCloserRef = useRef<(() => void) | null>(null);
-  const processedTxsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const initSystem = async () => {
@@ -212,11 +211,6 @@ export default function CreateInvoice() {
       alert(`⚠️ This transaction exceeds your free tier limit (${sysConfig.freeTierCap.toLocaleString()} PHP). Please subscribe to continue.`);
       return;
     }
-    if (streamCloserRef.current) {
-      streamCloserRef.current();
-      streamCloserRef.current = null;
-    }
-    processedTxsRef.current.clear();
     setPaymentStartTime(Date.now());
     startListeningForPayment();
   };
@@ -234,12 +228,7 @@ export default function CreateInvoice() {
   };
 
   const startListeningForPayment = () => {
-    if (!merchantAddress || paymentStatus === "listening") return;
-    if (streamCloserRef.current) {
-      streamCloserRef.current();
-      streamCloserRef.current = null;
-    }
-    processedTxsRef.current.clear();
+    if (!merchantAddress) return;
     setPaymentStatus("listening");
 
     const server = new Horizon.Server(sysConfig.horizonUrl);
@@ -248,40 +237,32 @@ export default function CreateInvoice() {
       .cursor("now")
       .stream({
         onmessage: async (transaction: any) => {
-          if (!transaction.hash || processedTxsRef.current.has(transaction.hash)) return;
-          processedTxsRef.current.add(transaction.hash);
-
           const incomingMemo = transaction.memo ? transaction.memo.toString().trim() : (transaction.memo_text ? transaction.memo_text.trim() : "");
-          if (incomingMemo !== memo.trim()) return;
+          if (incomingMemo === memo.trim()) {
+            setReceiptHash(transaction.hash);
+            setIsLoading(true);
+            setLoadingMsg("Confirming payment & generating receipt...");
 
-          setReceiptHash(transaction.hash);
-          setIsLoading(true);
-          setLoadingMsg("Confirming payment & generating receipt...");
+            const receiveTime = Date.now();
+            let totalSpeed = "0.00";
+            let netSpeed = "0.00";
 
-          const receiveTime = Date.now();
-          let totalSpeed = "0.00";
-          let netSpeed = "0.00";
+            if (paymentStartTime) totalSpeed = ((receiveTime - paymentStartTime) / 1000).toFixed(2);
 
-          if (paymentStartTime) totalSpeed = ((receiveTime - paymentStartTime) / 1000).toFixed(2);
+            if (transaction.created_at) {
+              const ledgerTime = new Date(transaction.created_at).getTime();
+              const speedSeconds = Math.max(0.1, Math.abs(receiveTime - ledgerTime) / 1000);
+              netSpeed = speedSeconds.toFixed(2);
+            } else {
+              netSpeed = totalSpeed;
+            }
 
-          if (transaction.created_at) {
-            const ledgerTime = new Date(transaction.created_at).getTime();
-            const speedSeconds = Math.max(0.1, Math.abs(receiveTime - ledgerTime) / 1000);
-            netSpeed = speedSeconds.toFixed(2);
-          } else {
-            netSpeed = totalSpeed;
+            setSpeeds({ network: netSpeed, total: totalSpeed });
+            await saveInvoiceToFirestore("success", transaction.hash, netSpeed, totalSpeed);
+
+            setIsLoading(false);
+            setPaymentStatus("success");
           }
-
-          if (streamCloserRef.current) {
-            streamCloserRef.current();
-            streamCloserRef.current = null;
-          }
-
-          setSpeeds({ network: netSpeed, total: totalSpeed });
-          await saveInvoiceToFirestore("success", transaction.hash, netSpeed, totalSpeed);
-
-          setIsLoading(false);
-          setPaymentStatus("success");
         },
         onerror: async (error) => {
           console.error("Stream Error:", error);
@@ -289,7 +270,6 @@ export default function CreateInvoice() {
             streamCloserRef.current();
             streamCloserRef.current = null;
           }
-          processedTxsRef.current.clear();
           let totalSpeed = "0.00";
           if (paymentStartTime) totalSpeed = ((Date.now() - paymentStartTime) / 1000).toFixed(2);
           await saveInvoiceToFirestore("failed", "", "0.00", totalSpeed);
