@@ -95,34 +95,18 @@ export default function ContingencyVault() {
         };
     }, []);
 
-    // Auto-trigger authentication when a valid Stellar secret key is pasted
-    useEffect(() => {
-        if (secretKey.length === 56 && secretKey.startsWith("S") && !isAuthenticating && !isSessionUnlocked) {
-            handleUnlockSession();
-        }
-    }, [secretKey]);
-
     const syncHorizonData = async (kp: Keypair) => {
         setIsSyncing(true);
         try {
             const server = new Horizon.Server(config.networkUrl);
             const pubKey = kp.publicKey();
 
-            // Handle new/unfunded accounts gracefully
-            try {
-                const account = await server.loadAccount(pubKey);
-                const targetBalance = account.balances.find(b =>
-                    (b as any).asset_code === config.targetAsset ||
-                    (config.targetAsset === "XLM" && b.asset_type === "native")
-                );
-                setAvailableBalance(targetBalance ? targetBalance.balance : "0.00");
-            } catch (accErr: any) {
-                if (accErr?.response?.status === 404) {
-                    setAvailableBalance("0.00");
-                } else {
-                    throw accErr;
-                }
-            }
+            const account = await server.loadAccount(pubKey);
+            const targetBalance = account.balances.find(b =>
+                (b as any).asset_code === config.targetAsset ||
+                (config.targetAsset === "XLM" && b.asset_type === "native")
+            );
+            setAvailableBalance(targetBalance ? targetBalance.balance : "0.00");
 
             const claimables = await server.claimableBalances().claimant(pubKey).call();
 
@@ -155,15 +139,13 @@ export default function ContingencyVault() {
         } catch (error) {
             console.error("Horizon Sync Error:", error);
             addLog("Failed to synchronize with Horizon ledger.", "warn");
-            throw error;
+            throw error; // Throwing error to catch it during the unlock session flow
         } finally {
             setIsSyncing(false);
         }
     };
 
     const handleUnlockSession = async () => {
-        if (!secretKey) return;
-
         try {
             setKeyError("");
             setIsAuthenticating(true);
@@ -395,7 +377,6 @@ export default function ContingencyVault() {
                         placeholder="S..."
                         value={secretKey}
                         onChange={(e) => setSecretKey(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && !isAuthenticating && handleUnlockSession()}
                         disabled={isAuthenticating}
                         className="styled-input"
                         style={{ marginBottom: 12, textAlign: "center", borderColor: keyError ? "#ef4444" : "rgba(255,255,255,0.1)", opacity: isAuthenticating ? 0.5 : 1 }}
