@@ -56,7 +56,7 @@ export default function App() {
               <Route path="subscription" element={<Subscription />} />
               <Route path="send-payment" element={<SendPayment />} />
             </Route>
-//e
+//r
             <Route
               path="/admin"
               element={
