@@ -78,9 +78,7 @@ npm run preview
 - **App URL:** [I need to change this - TBD]
 - **Network:** Testnet (Futurenet)
 - **Status:** Active Testing & Development
-- **Smart Contract ID:** `[I need to change this - Contract address pending deployment]`
-- **Horizon URL:** `https://horizon-testnet.stellar.org`
-- **Soroban RPC:** `https://soroban-testnet.stellar.org`
+- **Horizon URL:** `https://stellar.expert/explorer/testnet/account/GBMODWXWV7G2GWGNRX6I6R54HMUMT2SDKQWOUSAVVETF4W2B7CYIKE7P`
 - 📸 **Screenshot — Stellar Expert (Testnet):**
   ![Testnet Screenshot](./screenshots/testnet.png)
 
