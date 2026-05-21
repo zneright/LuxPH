@@ -30,7 +30,13 @@ LuxPH was built to empower Filipino merchants and individuals with blockchain-ba
 - **Subscription Tiers** — Free and Pro plans with flexible rate limits and feature access.
 - **Cashout Management** — Convert crypto to fiat with integrated anchor support (PDAX integration).
 - **Contingency Vault** — Automated ledger-locked savings engine utilizing Time-Bound Claimable Balances on Stellar.
-
+![React](https://img.shields.io/badge/React-19.2-blue?style=flat&logo=react)
+![TypeScript](https://img.shields.io/badge/TypeScript-6.0-blue?style=flat&logo=typescript)
+![Vite](https://img.shields.io/badge/Vite-8.0-purple?style=flat&logo=vite)
+![Tailwind](https://img.shields.io/badge/Tailwind-4.3-teal?style=flat&logo=tailwindcss)
+![Framer Motion](https://img.shields.io/badge/Framer_Motion-12.38-pink?style=flat&logo=framer)
+![Firebase](https://img.shields.io/badge/Firebase-Backend-yellow?style=flat&logo=firebase)
+![Stellar](https://img.shields.io/badge/Stellar-Blockchain-black?style=flat&logo=stellar)
 ## 🛠️ Tech Stack
 - **Frontend:** React 19.2, TypeScript 6.0, Vite 8.0, Tailwind CSS 4.3, Framer Motion 12.38
 - **Backend:** Firebase (Authentication, Firestore Database, Cloud Functions, Hosting)
