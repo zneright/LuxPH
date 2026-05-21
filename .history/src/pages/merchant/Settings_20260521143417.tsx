@@ -124,6 +124,7 @@ export default function Settings() {
         .st-header-block p { color: #9ca3af; fontSize: 13px; margin: 0; }
         .st-panel-card { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; }
         
+        /* New Wallet Banner Styles */
         .st-wallet-banner { background: rgba(79, 70, 229, 0.05); border: 1px solid rgba(79, 70, 229, 0.2); border-radius: 12px; padding: 32px 24px; margin-bottom: 30px; display: flex; flex-direction: column; align-items: center; text-align: center; }
         .st-app-links { display: flex; gap: 12px; margin-top: 20px; justify-content: center; flex-wrap: wrap; }
         .st-app-link-btn { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #e5e7eb; padding: 10px 16px; border-radius: 8px; fontSize: 12px; text-decoration: none; display: flex; align-items: center; gap: 8px; transition: all 0.2s; fontFamily: 'Nunito', sans-serif; font-weight: 600; }
@@ -135,34 +136,6 @@ export default function Settings() {
         @media (min-width: 992px) {
           .st-grid-layout { grid-template-columns: 1fr 1fr; }
         }
-
-        /* 🚨 FIX: Force Stellar Wallets Kit Modal to the Center 🚨 */
-        :global(#stellar-wallets-kit-modal-root),
-        :global([id^="stellar-wallets-modal"]),
-        :global(.swk-modal),
-        :global(stellar-wallets-modal),
-        body > div[class*="swk"], 
-        body > div[id*="swk"] {
-            position: fixed !important;
-            top: 50% !important;
-            left: 50% !important;
-            transform: translate(-50%, -50%) !important;
-            z-index: 999999 !important;
-            bottom: auto !important;
-            right: auto !important;
-            margin: 0 !important;
-        }
-
-        /* Fix modal overlay background */
-        :global(.swk-overlay),
-        :global([id^="swk-overlay"]) {
-            position: fixed !important;
-            top: 0 !important;
-            left: 0 !important;
-            width: 100vw !important;
-            height: 100vh !important;
-            z-index: 999998 !important;
-        }
       `}</style>
 
       <div className="st-header-block">
@@ -170,6 +143,7 @@ export default function Settings() {
         <p>Connect your wallet to interact with the Stellar network and manage your profile.</p>
       </div>
 
+      {/* Prominent Auto-Connection Wallet Hub */}
       <div className="st-wallet-banner">
         {stellarAddress ? (
           <div style={{ width: "100%", maxWidth: "500px" }}>
@@ -206,6 +180,7 @@ export default function Settings() {
             <div style={{ marginTop: 24, paddingTop: 20, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
               <p style={{ fontSize: 12, color: "#6b7280", margin: 0 }}>Don't have a wallet installed? Get one here:</p>
               <div className="st-app-links">
+                {/* Direct App/Extension Links */}
                 <a href="https://freighter.app/" target="_blank" rel="noreferrer" className="st-app-link-btn">
                   🚢 Open / Get Freighter
                 </a>

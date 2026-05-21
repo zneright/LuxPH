@@ -102,7 +102,6 @@ export default function Settings() {
   }, [walletAddress, merchantData?.stellarPublicKey, user]);
 
   const connectWallet = async () => {
-    // This directly triggers the wallet kit modal for auto-connection
     await connectWalletAdapter('stellar-wallets-kit');
   };
 
@@ -123,45 +122,12 @@ export default function Settings() {
         .st-header-block h1 { fontSize: 30px; fontWeight: 800; color: #fff; margin-bottom: 4px; fontFamily: 'Nunito', sans-serif; letterSpacing: -0.02em; }
         .st-header-block p { color: #9ca3af; fontSize: 13px; margin: 0; }
         .st-panel-card { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; }
-        
-        .st-wallet-banner { background: rgba(79, 70, 229, 0.05); border: 1px solid rgba(79, 70, 229, 0.2); border-radius: 12px; padding: 32px 24px; margin-bottom: 30px; display: flex; flex-direction: column; align-items: center; text-align: center; }
-        .st-app-links { display: flex; gap: 12px; margin-top: 20px; justify-content: center; flex-wrap: wrap; }
-        .st-app-link-btn { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #e5e7eb; padding: 10px 16px; border-radius: 8px; fontSize: 12px; text-decoration: none; display: flex; align-items: center; gap: 8px; transition: all 0.2s; fontFamily: 'Nunito', sans-serif; font-weight: 600; }
-        .st-app-link-btn:hover { background: rgba(255,255,255,0.1); transform: translateY(-1px); }
-        
+        .st-wallet-banner { background: rgba(79, 70, 229, 0.05); border: 1px solid rgba(79, 70, 229, 0.2); border-radius: 12px; padding: 24px; margin-bottom: 30px; display: flex; flex-direction: column; align-items: center; text-align: center; }
         .st-card-header { padding: 14px 20px; border-bottom: 1px solid rgba(255,255,255,.06); fontSize: 13px; fontWeight: 600; color: #e5e7eb; }
         .st-card-body { padding: 20px; flex: 1; display: flex; flex-direction: column; }
         
         @media (min-width: 992px) {
           .st-grid-layout { grid-template-columns: 1fr 1fr; }
-        }
-
-        /* 🚨 FIX: Force Stellar Wallets Kit Modal to the Center 🚨 */
-        :global(#stellar-wallets-kit-modal-root),
-        :global([id^="stellar-wallets-modal"]),
-        :global(.swk-modal),
-        :global(stellar-wallets-modal),
-        body > div[class*="swk"], 
-        body > div[id*="swk"] {
-            position: fixed !important;
-            top: 50% !important;
-            left: 50% !important;
-            transform: translate(-50%, -50%) !important;
-            z-index: 999999 !important;
-            bottom: auto !important;
-            right: auto !important;
-            margin: 0 !important;
-        }
-
-        /* Fix modal overlay background */
-        :global(.swk-overlay),
-        :global([id^="swk-overlay"]) {
-            position: fixed !important;
-            top: 0 !important;
-            left: 0 !important;
-            width: 100vw !important;
-            height: 100vh !important;
-            z-index: 999998 !important;
         }
       `}</style>
 
@@ -170,50 +136,36 @@ export default function Settings() {
         <p>Connect your wallet to interact with the Stellar network and manage your profile.</p>
       </div>
 
+      {/* Prominent Wallet Section */}
       <div className="st-wallet-banner">
         {stellarAddress ? (
           <div style={{ width: "100%", maxWidth: "500px" }}>
             <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", background: "rgba(74,222,128,.1)", border: "1px solid rgba(74,222,128,.2)", borderRadius: 20, marginBottom: 20, fontSize: 13, color: "#86efac", fontWeight: 700 }}>
-              ✓ App Linked Successfully
+              ✓ Wallet Connected Actively
             </div>
             <div style={{ marginBottom: 20, textAlign: "left" }}>
-              <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>Active Stellar Address</div>
+              <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>Stellar Address</div>
               <input readOnly value={stellarAddress} style={{ width: "100%", background: "rgba(0,0,0,.3)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 8, padding: "12px 16px", color: "#e5e7eb", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "'DM Mono',monospace", textAlign: "center" }} />
             </div>
             <button type="button" onClick={disconnectWallet} style={{ background: "rgba(248,113,113,.1)", color: "#f87171", border: "1px solid rgba(248,113,113,.25)", borderRadius: 8, padding: "10px 24px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'Nunito',sans-serif", transition: "all 0.2s" }}>
-              Disconnect App
+              Disconnect Wallet
             </button>
           </div>
         ) : (
-          <div style={{ width: "100%", maxWidth: "450px" }}>
+          <div style={{ width: "100%", maxWidth: "400px" }}>
             <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", background: "rgba(250,204,21,.1)", border: "1px solid rgba(250,204,21,.2)", borderRadius: 20, marginBottom: 16, fontSize: 13, color: "#fde047", fontWeight: 700 }}>
-              ⚠ Secure Connection Required
+              ⚠ Action Required
             </div>
-            <h2 style={{ color: "#fff", fontSize: 22, fontFamily: "'Nunito',sans-serif", margin: "0 0 12px 0" }}>Link Your Wallet App</h2>
-            <p style={{ fontSize: 14, color: "#9ca3af", marginBottom: 24, lineHeight: 1.5 }}>
-              Click below to automatically launch the connection portal. If you are on mobile, it will route directly to your wallet app.
-            </p>
-
+            <h2 style={{ color: "#fff", fontSize: 20, fontFamily: "'Nunito',sans-serif", margin: "0 0 12px 0" }}>Connect to the Network</h2>
+            <p style={{ fontSize: 14, color: "#9ca3af", marginBottom: 24, lineHeight: 1.5 }}>Link your Freighter wallet to start generating invoices and interacting directly with the app.</p>
             <button
               type="button"
               onClick={connectWallet}
               disabled={isConnecting}
-              style={{ background: isConnecting ? "transparent" : "linear-gradient(135deg,#7c3aed,#4f46e5)", color: "#fff", border: isConnecting ? "1px solid rgba(255,255,255,0.1)" : "none", borderRadius: 8, padding: "16px 24px", fontSize: 16, cursor: isConnecting ? "not-allowed" : "pointer", fontFamily: "'Nunito',sans-serif", fontWeight: 800, width: "100%", display: "flex", justifyContent: "center", boxShadow: "0 4px 14px rgba(79, 70, 229, 0.4)" }}
+              style={{ background: isConnecting ? "transparent" : "linear-gradient(135deg,#7c3aed,#4f46e5)", color: "#fff", border: isConnecting ? "1px solid rgba(255,255,255,0.1)" : "none", borderRadius: 8, padding: "14px 24px", fontSize: 15, cursor: isConnecting ? "not-allowed" : "pointer", fontFamily: "'Nunito',sans-serif", fontWeight: 700, width: "100%", display: "flex", justifyContent: "center" }}
             >
-              {isConnecting ? <LoadingBadge text="Connecting App..." variant="secure" /> : "Connect & Go to App"}
+              {isConnecting ? <LoadingBadge text="Connecting..." variant="secure" /> : "Connect Stellar Wallet"}
             </button>
-
-            <div style={{ marginTop: 24, paddingTop: 20, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
-              <p style={{ fontSize: 12, color: "#6b7280", margin: 0 }}>Don't have a wallet installed? Get one here:</p>
-              <div className="st-app-links">
-                <a href="https://freighter.app/" target="_blank" rel="noreferrer" className="st-app-link-btn">
-                  🚢 Open / Get Freighter
-                </a>
-                <a href="https://lobstr.co/" target="_blank" rel="noreferrer" className="st-app-link-btn">
-                  🦞 Open / Get Lobstr
-                </a>
-              </div>
-            </div>
           </div>
         )}
       </div>
