@@ -1,45 +1,50 @@
 # LuxPH - Stellar-Powered Invoice & Payment Platform for the Philippines
 
+![Stellar](https://img.shields.io/badge/Stellar-Network-black?style=flat-square&logo=stellar)
+![React](https://img.shields.io/badge/React-19.2-blue?style=flat-square&logo=react)
+![Firebase](https://img.shields.io/badge/Firebase-Backend-yellow?style=flat-square&logo=firebase)
+
 ## 🧩 Problem
-MSMEs, OFWs, and unbanked Filipinos lack affordable, accessible payment and invoicing solutions that enable seamless cross-border transactions and local settlements. Traditional payment gateways charge high fees (2-5%), require complex KYC processes, and exclude those without access to traditional banking infrastructure. Small merchants struggle to issue professional invoices, track payments, manage cash flow efficiently, and settle instantly to their bank accounts.
+MSMEs, OFWs, and unbanked Filipinos lack affordable, accessible payment and invoicing solutions that enable seamless cross-border transactions and local settlements. Traditional payment gateways charge high fees (2.5% - 3.5%), require complex KYC processes, and exclude those without access to traditional banking infrastructure. Small merchants struggle to issue professional invoices, track payments, manage cash flow efficiently, and settle instantly to their bank accounts.
 
 ## 🌟 Vision
 To democratize financial services in the Philippines by leveraging Stellar blockchain technology, enabling millions of Filipinos to access affordable, instant, and borderless payment solutions. LuxPH aims to create an inclusive financial ecosystem where any merchant—regardless of bank account status—can accept payments, issue invoices, and manage their business finances with confidence. Within 3 years, we envision LuxPH as the go-to platform for 100,000+ Filipino merchants to process payments at a fraction of traditional costs.
 
 ## 🎯 Purpose
-LuxPH was built to empower Filipino merchants and individuals with blockchain-based financial tools that eliminate intermediaries, reduce transaction costs to <0.1%, and provide transparency. The platform bridges the gap between traditional finance and Web3, making it easy for merchants to accept stablecoin payments (USDC, PH₱) and settle instantly to their preferred accounts or wallets.
+LuxPH was built to empower Filipino merchants and individuals with blockchain-based financial tools that eliminate intermediaries, reduce transaction costs to <0.1%, and provide absolute transparency. The platform bridges the gap between traditional finance and Web3, making it easy for merchants to accept stablecoin payments (USDC, PHPC) and settle instantly to their preferred accounts or wallets.
 
 ## 👥 Target Users
-- **OFWs (Overseas Filipino Workers)** — Send remittances to family and businesses at lower costs with instant settlement
-- **MSMEs & Solo Entrepreneurs** — Manage invoices, receive payments, track transactions, and access business analytics
-- **Unbanked & Underbanked Filipinos** — Access financial services without a traditional bank account or complex KYC
-- **Freelancers & Service Providers** — Invoice clients globally and receive payments without intermediaries
-- **Small Retailers & Online Sellers** — Accept digital payments, manage inventory, and settle instantly
+- **OFWs (Overseas Filipino Workers)** — Send remittances to family and businesses at lower costs with instant settlement.
+- **MSMEs & Solo Entrepreneurs** — Manage invoices, receive payments, track transactions, and access business analytics.
+- **Unbanked & Underbanked Filipinos** — Access financial services without a traditional bank account or complex KYC.
+- **Freelancers & Service Providers** — Invoice clients globally and receive payments without intermediaries.
+- **Small Retailers & Online Sellers** — Accept digital payments, manage inventory, and settle instantly.
 
 ## ✨ Features
-- **Invoice Management** — Create, track, and manage professional invoices with QR code support and PDF export
-- **Multi-Wallet Support** — Accept payments from Stellar wallet holders (Freighter, Albedo, Stellar Wallets Kit)
-- **Stablecoin Payments** — Accept USDC and Philippine Peso (PH₱) stablecoins on Stellar with real-time conversion
-- **Instant Settlements** — Direct peer-to-peer transactions via Soroban smart contracts (0.1 XLM fee)
-- **Merchant Dashboard** — Real-time analytics, transaction history, revenue tracking, and business metrics
-- **Admin Panel** — Platform management, merchant verification, transaction monitoring, and system configuration
-- **Subscription Tiers** — Free and Pro plans with flexible rate limits and feature access
-- **PDF Export** — Generate printable invoices, receipts, and transaction reports
-- **Cashout Management** — Convert crypto to fiat with integrated anchor support (PDAX integration)
-- **Soroban Smart Contracts** — Secure, transparent on-chain invoice validation and payment processing with dispute resolution
+- **Invoice Management** — Create, track, and manage professional invoices with QR code support and PDF export.
+- **Multi-Wallet Support** — Accept payments from Stellar wallet holders (Freighter, Albedo, Stellar Wallets Kit).
+- **Stablecoin Payments** — Accept USDC and Philippine Peso (PHPC) stablecoins on Stellar with real-time conversion.
+- **Instant Settlements** — Direct peer-to-peer transactions via Soroban smart contracts.
+- **Merchant Dashboard** — Real-time analytics, transaction history, revenue tracking, and business metrics.
+- **Admin Panel** — Platform management, merchant verification, transaction monitoring, and system configuration.
+- **Subscription Tiers** — Free and Pro plans with flexible rate limits and feature access.
+- **Cashout Management** — Convert crypto to fiat with integrated anchor support (PDAX integration).
+- **Contingency Vault** — Automated ledger-locked savings engine utilizing Time-Bound Claimable Balances on Stellar.
 
 ## 🛠️ Tech Stack
-- **Frontend:** React 19.2.6, TypeScript 6.0.2, Vite 8.0.12, Tailwind CSS 4.3.0, Framer Motion 12.38.0
+- **Frontend:** React 19.2, TypeScript 6.0, Vite 8.0, Tailwind CSS 4.3, Framer Motion 12.38
 - **Backend:** Firebase (Authentication, Firestore Database, Cloud Functions, Hosting)
-- **Blockchain:** Stellar Soroban Smart Contracts, Horizon API, Stellar SDK v15, Soroban Client v1.0.1
-- **Wallets:** Freighter API v6.0.1, Stellar Wallets Kit v2.2.0, Albedo v0.1.3
-- **UI & UX:** Lucide React Icons v1.16.0, React QR Scanner v2.6.0, jsPDF v4.2.1, html2canvas v1.4.1
-- **Other:** PostCSS, Autoprefixer, vite-plugin-node-polyfills
+- **Blockchain:** Stellar Soroban Smart Contracts, Horizon API, Stellar SDK v15, Soroban Client v1.0
+- **Wallets:** Freighter API v6.0, Stellar Wallets Kit v2.2, Albedo v0.1
+- **UI & Utilities:** Lucide React, React QR Scanner, jsPDF, html2canvas
+
+---
 
 ## 🚀 How to Run Locally
+
+### 1. Clone the repository
 ```bash
-# Clone the repository
-git clone https://github.com/zneright/LuxPH.git
+git clone [https://github.com/zneright/LuxPH.git](https://github.com/zneright/LuxPH.git)
 cd LuxPH
 
 # Install dependencies
