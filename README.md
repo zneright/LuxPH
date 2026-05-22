@@ -78,21 +78,21 @@ npm run preview
 - **App URL:** [I need to change this - TBD]
 - **Network:** Testnet (Futurenet)
 - **Status:** Active Testing & Development
-- **Horizon URL:** `https://stellar.expert/explorer/testnet/account/GBMODWXWV7G2GWGNRX6I6R54HMUMT2SDKQWOUSAVVETF4W2B7CYIKE7P`
+- **URL Testnet:** `https://stellar.expert/explorer/testnet/account/GBMODWXWV7G2GWGNRX6I6R54HMUMT2SDKQWOUSAVVETF4W2B7CYIKE7P`
 - 📸 **Screenshot — Stellar Expert (Testnet):**
   ![Testnet Screenshot](./screenshots/testnet.png)
 
 ### Mainnet (Stellar Public Network)
 - **App URL:** [I need to change this - TBD after mainnet deployment]
 - **Network:** Mainnet (Public)
-- **Status:** Coming Soon - Post-Hackathon Deployment
-- **Horizon URL:** `https://horizon.stellar.org`
+- Deployment
+- **URL Mainnet:** `https://stellar.expert/explorer/public/account/GBMODWXWV7G2GWGNRX6I6R54HMUMT2SDKQWOUSAVVETF4W2B7CYIKE7P`
 - 📸 **Screenshot — Stellar Expert (Mainnet):**
   ![Mainnet Screenshot](./screenshots/mainnet.png)
 
 ## 🎥 Demo
-- 🔗 **Live App (Testnet):** [I need to change this - URL pending]
-- 🎬 **Demo Video:** [I need to change this - YouTube/Loom link coming soon]
+- 🔗 **Live App:** https://luxph-8dc3d.firebaseapp.com/
+- 🎬 **Demo Video:** https://drive.google.com/file/d/1xe7_bNYDVFYZ5OtDwGAX85_o5YBcy-2Q/view?usp=drive_link
 - 🖼️ **Pitch Deck:** [I need to change this - Google Slides/Canva link coming soon]
 
 ## 👨‍💻 Team
