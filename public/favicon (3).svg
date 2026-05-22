@@ -1,0 +1,38 @@
+<svg width="240" height="240" viewBox="0 0 240 240" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="luxGrad" x1="44" y1="40" x2="196" y2="196" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#22C55E" />
+      <stop offset="0.55" stop-color="#8B5CF6" />
+      <stop offset="1" stop-color="#3B82F6" />
+    </linearGradient>
+  </defs>
+
+  <!-- L-Track Line -->
+  <path 
+    d="M76 42V134 C76 160 94 178 120 178H186" 
+    stroke="url(#luxGrad)" 
+    stroke-width="22" 
+    stroke-linecap="round" 
+    stroke-linejoin="round" 
+  />
+
+  <!-- Top Block (Green) -->
+  <rect 
+    x="44" 
+    y="24" 
+    width="64" 
+    height="64" 
+    rx="20" 
+    fill="#22C55E" 
+  />
+
+  <!-- Bottom Block (Blue) -->
+  <rect 
+    x="154" 
+    y="146" 
+    width="64" 
+    height="64" 
+    rx="20" 
+    fill="#3B82F6" 
+  />
+</svg>
