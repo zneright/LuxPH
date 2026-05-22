@@ -680,7 +680,7 @@ export default function CashOut() {
                       verticalAlign: "middle",
                       marginRight: "12px",
                       position: "relative",
-                      top: "3px" // Manually nudges the logo down to match the text center perfectly
+                      top: "px" // Manually nudges the logo down to match the text center perfectly
                     }}
                     crossOrigin="anonymous"
                   />

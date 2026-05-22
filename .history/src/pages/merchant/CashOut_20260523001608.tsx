@@ -361,14 +361,8 @@ export default function CashOut() {
         await saveCashoutToFirestore(shortId, "failed", "", "0.00", totalSpeed, errorMessage);
       }
 
-      const isNetworkError = errorMessage.toLowerCase().includes("network") || errorMessage.toLowerCase().includes("passphrase");
-
-      if (isNetworkError) {
-        const expectedNetwork = networkConfig.networkPassphrase === Networks.TESTNET ? "TESTNET" : "MAINNET (PUBLIC)";
-        const wrongNetwork = expectedNetwork === "TESTNET" ? "MAINNET" : "TESTNET";
-        alert(`NETWORK MISMATCH DETECTED!\n\nThe Lux PH System is currently running on ${expectedNetwork}, but your Wallet extension appears to be set to ${wrongNetwork}.\n\nPlease open your wallet extension and switch your network to ${expectedNetwork} to continue.`);
-      } else if (errorMessage.toLowerCase().includes("decline") || errorMessage.toLowerCase().includes("cancel") || errorMessage.toLowerCase().includes("reject")) {
-        alert("Transaction was cancelled by user.");
+      if (errorMessage.toLowerCase().includes("decline") || errorMessage.toLowerCase().includes("cancel") || errorMessage.toLowerCase().includes("reject")) {
+        alert("Transaction was cancelled.");
       } else {
         alert(`Cash Out Failed: ${errorMessage}`);
       }
@@ -383,14 +377,12 @@ export default function CashOut() {
 
     setIsGeneratingPdf(true);
     try {
-      // Allow fonts to fully render before screenshotting
-      await document.fonts.ready;
-
+      // html2canvas grabs the exact visual representation of the div
+      // useCORS is required so external bank/gcash logos load in the canvas
       const canvas = await html2canvas(element, {
         scale: 2,
         useCORS: true,
-        backgroundColor: "#ffffff",
-        logging: false,
+        backgroundColor: "#ffffff"
       });
 
       const imgData = canvas.toDataURL("image/png");
@@ -402,8 +394,10 @@ export default function CashOut() {
       });
 
       const pdfWidth = pdf.internal.pageSize.getWidth();
+      // Keep the aspect ratio identical to the UI
       const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
 
+      // Draw it onto the PDF document
       pdf.addImage(imgData, "PNG", 0, 10, pdfWidth, pdfHeight);
       pdf.save(`PDAX_Settlement_${receipt.id}.pdf`);
     } catch (error) {
@@ -416,8 +410,8 @@ export default function CashOut() {
 
   const resetForm = () => {
     setReceipt(null);
-    setTokenAmount("0");
-    handleTokenAmountChange("0");
+    setTokenAmount("5000");
+    handleTokenAmountChange("5000");
     setAccountNumber("");
     setAccountName("");
     setQrUploaded(false);
@@ -664,48 +658,19 @@ export default function CashOut() {
             style={{ display: "flex", justifyContent: "center", paddingTop: 20 }}
           >
             <div style={{ width: "100%", maxWidth: 480 }}>
-
               {/* THE ELEMENT WE ARE CONVERTING TO PDF */}
-              <div id="printable-receipt" style={{ background: "#ffffff", borderRadius: 16, padding: "40px 32px", position: "relative", overflow: "hidden" }}>
+              <div id="printable-receipt" style={{ background: "#ffffff", borderRadius: 16, padding: "32px 32px 40px", position: "relative", boxShadow: "0 25px 50px -12px rgba(0,0,0,0.5)", overflow: "hidden" }}>
+                <div style={{ position: "absolute", top: -10, left: 0, right: 0, height: 20, background: "repeating-linear-gradient(45deg, transparent, transparent 10px, #0a2540 10px, #0a2540 20px)" }} />
 
-                {/* 100% FAIL-PROOF PDF ALIGNMENT */}
-                <div style={{ textAlign: "center", marginBottom: "32px", marginTop: "8px", padding: "10px" }}>
-                  <img
-                    src="/images/luxphlogo.svg"
-                    alt="Lux PH Icon"
-                    style={{
-                      height: "36px",
-                      width: "auto",
-                      display: "inline-block",
-                      verticalAlign: "middle",
-                      marginRight: "12px",
-                      position: "relative",
-                      top: "3px" // Manually nudges the logo down to match the text center perfectly
-                    }}
-                    crossOrigin="anonymous"
-                  />
-                  <span style={{
-                    fontSize: "32px",
-                    fontWeight: 900,
-                    color: "#0f172a",
-                    fontFamily: "'Nunito',sans-serif",
-                    letterSpacing: "1px",
-                    display: "inline-block",
-                    verticalAlign: "middle"
-                  }}>
-                    LUX PH
-                  </span>
+                {/* LUX PH LOGO FOR PDF EXPORT */}
+                <div style={{ textAlign: "center", marginBottom: 16, marginTop: 16 }}>
+                  <img src="/images/luxphlogo.svg" alt="Lux PH Logo" style={{ height: 42, objectFit: "contain" }} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
                 </div>
 
-                <div style={{ textAlign: "center", marginBottom: 36 }}>
-                  <div style={{ width: 72, height: 72, background: "#10b981", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", color: "#fff" }}>
-                    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="20 6 9 17 4 12"></polyline>
-                    </svg>
-                  </div>
-
-                  <h2 style={{ margin: 0, color: "#0f172a", fontFamily: "'Nunito',sans-serif", fontSize: 26, fontWeight: 900 }}>Gateway Settled</h2>
-                  <p style={{ margin: "6px 0 0 0", color: "#64748b", fontSize: 14 }}>Your funds have securely reached PDAX.</p>
+                <div style={{ textAlign: "center", marginBottom: 32 }}>
+                  <div style={{ width: 64, height: 64, background: "#10b981", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", fontSize: 32, color: "#fff", boxShadow: "0 0 20px rgba(16,185,129,0.4)" }}>✓</div>
+                  <h2 style={{ margin: 0, color: "#0a2540", fontFamily: "'Nunito',sans-serif", fontSize: 24, fontWeight: 900 }}>Gateway Settled</h2>
+                  <p style={{ margin: "4px 0 0 0", color: "#6b7280", fontSize: 14 }}>Your funds have securely reached PDAX.</p>
                 </div>
 
                 <div style={{ borderTop: "2px dashed #e5e7eb", borderBottom: "2px dashed #e5e7eb", padding: "24px 0", marginBottom: 24, display: "flex", flexDirection: "column", gap: 16 }}>

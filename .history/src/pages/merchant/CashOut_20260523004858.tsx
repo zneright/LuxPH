@@ -416,8 +416,8 @@ export default function CashOut() {
 
   const resetForm = () => {
     setReceipt(null);
-    setTokenAmount("0");
-    handleTokenAmountChange("0");
+    setTokenAmount(");
+    handleTokenAmountChange("5000");
     setAccountNumber("");
     setAccountName("");
     setQrUploaded(false);

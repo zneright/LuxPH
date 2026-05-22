@@ -2,15 +2,14 @@ import React, { useState, useEffect } from "react";
 import { auth, db } from "../../config/firebase";
 import { onAuthStateChanged, type User } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore";
-import { Horizon, TransactionBuilder, Networks, Operation, Asset, Memo, StrKey } from "@stellar/stellar-sdk";
+import { Horizon, TransactionBuilder, Networks, Operation, Asset, Memo } from "@stellar/stellar-sdk";
 import { AnimatePresence, motion } from "framer-motion";
 import { LoadingOverlay } from "../../components/ui/LoadingOverlay";
-import { jsPDF } from "jspdf";
-import html2canvas from "html2canvas";
 
-// IMPORT YOUR WALLET AND NETWORK CONTEXTS
-import { useWallet } from "../../contexts/WalletContext";
-import { useNetwork } from "../../contexts/NetworkContext";
+// 1. IMPORT YOUR WALLET CONTEXT
+import { useWallet } from "../../contexts/W"; // Adjust path to where your WalletContext is located
+
+const FALLBACK_ANCHOR = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
 
 const BANK_LOGOS: Record<string, string> = {
   BPI: "https://upload.wikimedia.org/wikipedia/en/c/c2/Bank_of_the_Philippine_Islands_logo.svg",
@@ -36,8 +35,15 @@ interface ReceiptData {
 export default function CashOut() {
   const [user, setUser] = useState<User | null>(null);
   const [merchantAddress, setMerchantAddress] = useState<string>("");
+  const [sysConfig, setSysConfig] = useState({
+    networkPassphrase: Networks.TESTNET,
+    horizonUrl: "https://horizon-testnet.stellar.org",
+    phpcIssuer: FALLBACK_ANCHOR,
+    usdcIssuer: FALLBACK_ANCHOR,
+    anchorAddress: FALLBACK_ANCHOR
+  });
 
-  const { networkConfig, systemConfig } = useNetwork();
+  // 2. USE THE WALLET HOOK INSTEAD OF DIRECT FREIGHTER API
   const { address: connectedWallet, signTx } = useWallet();
 
   const [inputMode, setInputMode] = useState<"token" | "php">("token");
@@ -51,7 +57,6 @@ export default function CashOut() {
   const [qrUploaded, setQrUploaded] = useState<boolean>(false);
 
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
   const [loadingMsg, setLoadingMsg] = useState<string>("Initializing PDAX Gateway...");
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const [selectedToken, setSelectedToken] = useState<"XLM" | "PHPC" | "USDC">("PHPC");
@@ -61,6 +66,29 @@ export default function CashOut() {
   useEffect(() => {
     const initSystem = async () => {
       try {
+        const configSnap = await getDoc(doc(db, "system_config", "global"));
+        let currentPassphrase = Networks.TESTNET;
+        let currentHorizon = "https://horizon-testnet.stellar.org";
+        let currentIssuer = FALLBACK_ANCHOR;
+        let currentAnchorAddr = FALLBACK_ANCHOR;
+
+        if (configSnap.exists()) {
+          const c = configSnap.data();
+          const isTestnet = c.stellarNetwork === "Testnet (Futurenet)";
+          currentPassphrase = isTestnet ? Networks.TESTNET : Networks.PUBLIC;
+          currentHorizon = isTestnet ? "https://horizon-testnet.stellar.org" : "https://horizon.stellar.org";
+          currentIssuer = c.phpcIssuerAddress || FALLBACK_ANCHOR;
+          currentAnchorAddr = c.phpcIssuerAddress || FALLBACK_ANCHOR;
+
+          setSysConfig({
+            networkPassphrase: currentPassphrase,
+            horizonUrl: currentHorizon,
+            phpcIssuer: currentIssuer,
+            usdcIssuer: c.usdcIssuerAddress || FALLBACK_ANCHOR,
+            anchorAddress: currentAnchorAddr
+          });
+        }
+
         onAuthStateChanged(auth, async (currentUser) => {
           setUser(currentUser);
           if (currentUser) {
@@ -96,12 +124,12 @@ export default function CashOut() {
     if (!merchantAddress) return;
     const fetchBalance = async () => {
       try {
-        const server = new Horizon.Server(networkConfig.horizonUrl);
+        const server = new Horizon.Server(sysConfig.horizonUrl);
         const account = await server.loadAccount(merchantAddress);
 
         const balanceObj = account.balances.find((b: any) => {
           if (selectedToken === "XLM") return b.asset_type === "native";
-          const targetIssuer = selectedToken === "PHPC" ? systemConfig.phpcIssuerAddress : systemConfig.usdcIssuerAddress;
+          const targetIssuer = selectedToken === "PHPC" ? sysConfig.phpcIssuer : sysConfig.usdcIssuer;
           return b.asset_code === selectedToken && b.asset_issuer === targetIssuer;
         });
 
@@ -111,7 +139,7 @@ export default function CashOut() {
       }
     };
     fetchBalance();
-  }, [merchantAddress, selectedToken, networkConfig.horizonUrl, systemConfig.phpcIssuerAddress, systemConfig.usdcIssuerAddress]);
+  }, [merchantAddress, selectedToken, sysConfig.horizonUrl, sysConfig.phpcIssuer, sysConfig.usdcIssuer]);
 
   const handleTokenAmountChange = (val: string) => {
     setTokenAmount(val);
@@ -160,7 +188,7 @@ export default function CashOut() {
       const cashoutRef = doc(db, `merchants/${user.uid}/cashouts`, cashoutId);
       await setDoc(cashoutRef, {
         cashoutId: cashoutId,
-        anchor: "PDAX",
+        anchor: "PDAX", // Hardcoded to PDAX now
         payoutMethod: payoutMethod,
         bankName: payoutMethod === "bank" ? bankName : payoutMethod === "gcash" ? "GCash" : "QR Ph",
         accountName: accountName,
@@ -177,19 +205,6 @@ export default function CashOut() {
     } catch (err) {
       console.error("Firestore Save Error:", err);
     }
-  };
-
-  const validateNetworkConfiguration = async () => {
-    const server = new Horizon.Server(networkConfig.horizonUrl);
-    const root = await server.root();
-
-    if (!root || typeof root.network_passphrase !== 'string') {
-      throw new Error('Unable to validate Horizon network status.');
-    }
-    if (root.network_passphrase !== networkConfig.networkPassphrase) {
-      throw new Error('Horizon network mismatch: configured network does not match Horizon response.');
-    }
-    return true;
   };
 
   const handleCashOut = async () => {
@@ -211,45 +226,26 @@ export default function CashOut() {
     setReceipt(null);
 
     try {
-      setLoadingMsg("Rechecking network configuration...");
-      await validateNetworkConfiguration();
-
-      setLoadingMsg(`Securing connection to PDAX Gateway on ${networkConfig.stellarNetwork}...`);
-      const server = new Horizon.Server(networkConfig.horizonUrl);
+      const server = new Horizon.Server(sysConfig.horizonUrl);
       const sourceAccount = await server.loadAccount(merchantAddress);
 
       let asset: Asset;
       if (selectedToken === "XLM") {
         asset = Asset.native();
       } else if (selectedToken === "PHPC") {
-        asset = new Asset("PHPC", systemConfig.phpcIssuerAddress);
+        asset = new Asset("PHPC", sysConfig.phpcIssuer);
       } else {
-        asset = new Asset("USDC", systemConfig.usdcIssuerAddress);
+        asset = new Asset("USDC", sysConfig.usdcIssuer);
       }
 
       const txMemo = Memo.text(shortId);
 
-      let anchorDestination = systemConfig.pdaxAnchorAddress;
-
-      if (!anchorDestination || !StrKey.isValidEd25519PublicKey(anchorDestination)) {
-        console.warn("PDAX Anchor address is missing or invalid. Falling back to the Token Issuer address to simulate gateway settlement.");
-        if (!asset.isNative() && asset.issuer) {
-          anchorDestination = asset.issuer;
-        } else {
-          anchorDestination = systemConfig.phpcIssuerAddress;
-        }
-      }
-
-      if (!anchorDestination || !StrKey.isValidEd25519PublicKey(anchorDestination)) {
-        throw new Error("System Configuration Error: No valid anchor or issuer address found to receive the funds.");
-      }
-
       const transaction = new TransactionBuilder(sourceAccount, {
         fee: "1000",
-        networkPassphrase: networkConfig.networkPassphrase,
+        networkPassphrase: sysConfig.networkPassphrase,
       })
         .addOperation(Operation.payment({
-          destination: anchorDestination,
+          destination: sysConfig.anchorAddress,
           asset: asset,
           amount: parseFloat(tokenAmount).toFixed(7),
         }))
@@ -259,7 +255,8 @@ export default function CashOut() {
 
       setLoadingMsg("Awaiting Wallet Signature...");
 
-      const signedXdrString = await signTx(transaction.toXDR(), networkConfig.networkPassphrase);
+      // 3. USING WALLET CONTEXT TO SIGN
+      const signedXdrString = await signTx(transaction.toXDR(), sysConfig.networkPassphrase);
 
       if (!signedXdrString) {
         throw new Error("Transaction signature cancelled or failed.");
@@ -270,7 +267,7 @@ export default function CashOut() {
       const txBody = new URLSearchParams();
       txBody.append("tx", signedXdrString);
 
-      const submitResponse = await fetch(`${networkConfig.horizonUrl}/transactions`, {
+      const submitResponse = await fetch(`${sysConfig.horizonUrl}/transactions`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: txBody.toString()
@@ -294,8 +291,6 @@ export default function CashOut() {
           throw new Error(`Failed: YOUR wallet does not trust ${selectedToken}.`);
         } else if (exactError.includes("op_underfunded")) {
           throw new Error("Failed: Your wallet does not have enough funds to cash out this amount.");
-        } else if (exactError.includes("op_no_destination")) {
-          throw new Error("Failed: The Gateway Destination Account does not exist on the network yet.");
         } else {
           throw new Error(`Blockchain Rejected Transaction. Code: ${exactError}`);
         }
@@ -338,86 +333,30 @@ export default function CashOut() {
         amountPHP: parseFloat(phpAmount).toFixed(2),
         destination: displayDest,
         accountDetails: displayAcc,
-        anchor: "PDAX Gateway",
+        anchor: "PDAX",
         hash: hash,
         networkSpeed: netSpeed,
         totalWaitTime: totalSpeed
       });
 
     } catch (error: any) {
-      console.error("CashOut Execution Error:", error);
-
-      let errorMessage = "Unknown error occurred.";
-      if (typeof error === "string") {
-        errorMessage = error;
-      } else if (error instanceof Error) {
-        errorMessage = error.message;
-      } else if (error && typeof error === "object") {
-        errorMessage = error.message || error.error || error.details || JSON.stringify(error);
-      }
-
+      console.error(error);
       if (!cashoutLogged) {
         const totalSpeed = ((Date.now() - startTime) / 1000).toFixed(2);
-        await saveCashoutToFirestore(shortId, "failed", "", "0.00", totalSpeed, errorMessage);
+        await saveCashoutToFirestore(shortId, "failed", "", "0.00", totalSpeed, error.message || "Unknown error occurred.");
       }
-
-      const isNetworkError = errorMessage.toLowerCase().includes("network") || errorMessage.toLowerCase().includes("passphrase");
-
-      if (isNetworkError) {
-        const expectedNetwork = networkConfig.networkPassphrase === Networks.TESTNET ? "TESTNET" : "MAINNET (PUBLIC)";
-        const wrongNetwork = expectedNetwork === "TESTNET" ? "MAINNET" : "TESTNET";
-        alert(`NETWORK MISMATCH DETECTED!\n\nThe Lux PH System is currently running on ${expectedNetwork}, but your Wallet extension appears to be set to ${wrongNetwork}.\n\nPlease open your wallet extension and switch your network to ${expectedNetwork} to continue.`);
-      } else if (errorMessage.toLowerCase().includes("decline") || errorMessage.toLowerCase().includes("cancel") || errorMessage.toLowerCase().includes("reject")) {
-        alert("Transaction was cancelled by user.");
-      } else {
-        alert(`Cash Out Failed: ${errorMessage}`);
-      }
+      alert(error.message || "Failed to process cash out.");
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleDownloadPDF = async () => {
-    const element = document.getElementById("printable-receipt");
-    if (!element || !receipt) return;
-
-    setIsGeneratingPdf(true);
-    try {
-      // Allow fonts to fully render before screenshotting
-      await document.fonts.ready;
-
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: "#ffffff",
-        logging: false,
-      });
-
-      const imgData = canvas.toDataURL("image/png");
-
-      const pdf = new jsPDF({
-        orientation: "portrait",
-        unit: "mm",
-        format: "a4"
-      });
-
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-
-      pdf.addImage(imgData, "PNG", 0, 10, pdfWidth, pdfHeight);
-      pdf.save(`PDAX_Settlement_${receipt.id}.pdf`);
-    } catch (error) {
-      console.error("Failed to generate PDF:", error);
-      alert("Failed to generate PDF. Check console for details.");
-    } finally {
-      setIsGeneratingPdf(false);
-    }
-  };
+  const handlePrint = () => window.print();
 
   const resetForm = () => {
     setReceipt(null);
-    setTokenAmount("0");
-    handleTokenAmountChange("0");
+    setTokenAmount("5000");
+    handleTokenAmountChange("5000");
     setAccountNumber("");
     setAccountName("");
     setQrUploaded(false);
@@ -429,10 +368,11 @@ export default function CashOut() {
         .co-grid-layout { display: grid; grid-template-columns: 1.2fr 1fr; gap: 24px; }
         .co-dual-input { display: flex; gap: 16px; align-items: flex-start; }
         .co-method-shelf { display: flex; gap: 8px; margin-bottom: 16px; }
-        .co-form-container { background: #111827; border: 1px solid rgba(255,255,255,.08); border-radius: 16px; overflow: hidden; box-shadow: 0 10px 30px -10px rgba(0,0,0,0.5); }
+        .co-form-container { background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.08); border-radius: 16px; overflow: hidden; }
         .co-summary-container { background: #0a2540; border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 16px; overflow: hidden; box-shadow: 0 10px 30px -10px rgba(10, 37, 64, 0.5); }
         .receipt-action-buttons { display: flex; gap: 12px; mt: 24px; }
         
+        @media print { .hide-on-print { display: none !important; } }
         @media (max-width: 992px) {
           .co-grid-layout { grid-template-columns: 1fr; }
         }
@@ -449,12 +389,12 @@ export default function CashOut() {
         {isLoading && <LoadingOverlay isLoading={isLoading} message={loadingMsg} />}
       </AnimatePresence>
 
-      <div style={{ marginBottom: 24, display: 'flex', alignItems: 'center', gap: 16 }}>
+      <div className="hide-on-print" style={{ marginBottom: 24, display: 'flex', alignItems: 'center', gap: 16 }}>
         <div>
           <h1 style={{ fontSize: 30, fontWeight: 800, fontFamily: "'Nunito',sans-serif", color: "#fff", marginBottom: 4 }}>
-            PDAX Gateway
+            PDAX Cash Out
           </h1>
-          <p style={{ color: "#9ca3af", fontSize: 13 }}>Direct On-Chain Settlement to Fiat</p>
+          <p style={{ color: "#9ca3af", fontSize: 13 }}>Instant PHPC to Fiat settlement via PDAX Gateway</p>
         </div>
       </div>
 
@@ -467,22 +407,19 @@ export default function CashOut() {
             exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.3 }}
           >
-            {/* GATEWAY REALITY DISCLAIMER */}
-            <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", background: "rgba(16, 185, 129, 0.1)", border: "1px solid rgba(16, 185, 129, 0.3)", borderRadius: 8, marginBottom: 24, fontSize: 13, color: "#a7f3d0" }}>
-              <span style={{ fontSize: 18 }}>🔒</span>
-              <div>
-                <strong>Gateway Active:</strong> The Stellar token transfer to the PDAX Anchor is a <b>real transaction</b>. For this environment, the final fiat transfer to your bank/e-wallet is simulated.
-              </div>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 16px", background: "rgba(10, 37, 64, 0.4)", border: "1px solid rgba(10, 37, 64, 0.8)", borderRadius: 8, marginBottom: 24, fontSize: 13, color: "#93c5fd" }}>
+              ℹ&nbsp; Secured by PDAX. Funds are settled directly to your selected bank or e-wallet over the Stellar network. Account details are encrypted end-to-end.
             </div>
 
             <div className="co-grid-layout">
               <div className="co-form-container">
-                <div style={{ padding: "16px 24px", background: "#000", borderBottom: "1px solid rgba(255,255,255,.06)", fontSize: 14, fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                {/* 4. BRANDED PDAX HEADER */}
+                <div style={{ padding: "16px 24px", background: "#0a2540", borderBottom: "1px solid rgba(255,255,255,.06)", fontSize: 14, fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ color: "#10b981" }}>1</span> Withdrawal Details
                   </div>
-                  <div style={{ fontWeight: 900, fontSize: 18, letterSpacing: "1px", color: "#fff", display: "flex", alignItems: "center", gap: 6 }}>
-                    <div style={{ width: 12, height: 12, background: "#10b981", borderRadius: "50%" }}></div> PDAX
+                  <div style={{ fontWeight: 900, fontStyle: "italic", fontSize: 18, letterSpacing: "-0.5px", color: "#fff" }}>
+                    PDAX
                   </div>
                 </div>
 
@@ -542,7 +479,7 @@ export default function CashOut() {
 
                     <div style={{ borderTop: "1px solid rgba(255,255,255,.06)", paddingTop: 16, marginTop: 8 }}>
                       <div className="co-method-shelf">
-                        <button type="button" onClick={() => setPayoutMethod("bank")} style={{ flex: 1, padding: 10, borderRadius: 8, background: payoutMethod === "bank" ? "rgba(16, 185, 129, 0.15)" : "rgba(255,255,255,.05)", border: payoutMethod === "bank" ? "1px solid #10b981" : "1px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, transition: "all 0.2s" }}>
+                        <button type="button" onClick={() => setPayoutMethod("bank")} style={{ flex: 1, padding: 10, borderRadius: 8, background: payoutMethod === "bank" ? "rgba(10, 37, 64, 0.6)" : "rgba(255,255,255,.05)", border: payoutMethod === "bank" ? "1px solid #10b981" : "1px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, transition: "all 0.2s" }}>
                           <span style={{ fontSize: 16 }}>🏦</span> <span style={{ color: payoutMethod === "bank" ? "#fff" : "#9ca3af", fontWeight: 700, fontSize: 13, fontFamily: "'Nunito',sans-serif" }}>Bank</span>
                         </button>
                         <button type="button" onClick={() => setPayoutMethod("gcash")} style={{ flex: 1, padding: 10, borderRadius: 8, background: payoutMethod === "gcash" ? "rgba(59, 130, 246, 0.15)" : "rgba(255,255,255,.05)", border: payoutMethod === "gcash" ? "1px solid #3b82f6" : "1px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, transition: "all 0.2s" }}>
@@ -650,7 +587,7 @@ export default function CashOut() {
                 </div>
 
                 <div style={{ padding: "16px", background: "rgba(255,255,255,.02)", border: "1px solid rgba(255,255,255,.05)", borderRadius: 12, fontSize: 12, color: "#6b7280", lineHeight: 1.6 }}>
-                  <strong style={{ color: "#9ca3af" }}>Security Note:</strong> Your real bank details are heavily encrypted in our secure database. The public Stellar blockchain only sees a hashed reference ID in the transaction memo which the PDAX Gateway reads securely off-chain.
+                  <strong style={{ color: "#9ca3af" }}>Security Note:</strong> For your privacy, your real bank details are heavily encrypted in our secure database. The public Stellar blockchain only sees a hashed reference ID in the transaction memo which PDAX reads securely off-chain.
                 </div>
               </div>
             </div>
@@ -664,48 +601,13 @@ export default function CashOut() {
             style={{ display: "flex", justifyContent: "center", paddingTop: 20 }}
           >
             <div style={{ width: "100%", maxWidth: 480 }}>
+              <div id="printable-receipt" style={{ background: "#ffffff", borderRadius: 16, padding: "32px 32px 40px", position: "relative", boxShadow: "0 25px 50px -12px rgba(0,0,0,0.5)", overflow: "hidden" }}>
+                <div style={{ position: "absolute", top: -10, left: 0, right: 0, height: 20, background: "repeating-linear-gradient(45deg, transparent, transparent 10px, #0a2540 10px, #0a2540 20px)" }} />
 
-              {/* THE ELEMENT WE ARE CONVERTING TO PDF */}
-              <div id="printable-receipt" style={{ background: "#ffffff", borderRadius: 16, padding: "40px 32px", position: "relative", overflow: "hidden" }}>
-
-                {/* 100% FAIL-PROOF PDF ALIGNMENT */}
-                <div style={{ textAlign: "center", marginBottom: "32px", marginTop: "8px", padding: "10px" }}>
-                  <img
-                    src="/images/luxphlogo.svg"
-                    alt="Lux PH Icon"
-                    style={{
-                      height: "36px",
-                      width: "auto",
-                      display: "inline-block",
-                      verticalAlign: "middle",
-                      marginRight: "12px",
-                      position: "relative",
-                      top: "3px" // Manually nudges the logo down to match the text center perfectly
-                    }}
-                    crossOrigin="anonymous"
-                  />
-                  <span style={{
-                    fontSize: "32px",
-                    fontWeight: 900,
-                    color: "#0f172a",
-                    fontFamily: "'Nunito',sans-serif",
-                    letterSpacing: "1px",
-                    display: "inline-block",
-                    verticalAlign: "middle"
-                  }}>
-                    LUX PH
-                  </span>
-                </div>
-
-                <div style={{ textAlign: "center", marginBottom: 36 }}>
-                  <div style={{ width: 72, height: 72, background: "#10b981", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", color: "#fff" }}>
-                    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="20 6 9 17 4 12"></polyline>
-                    </svg>
-                  </div>
-
-                  <h2 style={{ margin: 0, color: "#0f172a", fontFamily: "'Nunito',sans-serif", fontSize: 26, fontWeight: 900 }}>Gateway Settled</h2>
-                  <p style={{ margin: "6px 0 0 0", color: "#64748b", fontSize: 14 }}>Your funds have securely reached PDAX.</p>
+                <div style={{ textAlign: "center", marginBottom: 32, marginTop: 10 }}>
+                  <div style={{ width: 64, height: 64, background: "#10b981", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", fontSize: 32, color: "#fff", boxShadow: "0 0 20px rgba(16,185,129,0.4)" }}>✓</div>
+                  <h2 style={{ margin: 0, color: "#0a2540", fontFamily: "'Nunito',sans-serif", fontSize: 24, fontWeight: 900, fontStyle: 'italic' }}>PDAX Settlement</h2>
+                  <p style={{ margin: "4px 0 0 0", color: "#6b7280", fontSize: 14 }}>Your funds have been securely transferred to the gateway.</p>
                 </div>
 
                 <div style={{ borderTop: "2px dashed #e5e7eb", borderBottom: "2px dashed #e5e7eb", padding: "24px 0", marginBottom: 24, display: "flex", flexDirection: "column", gap: 16 }}>
@@ -751,37 +653,17 @@ export default function CashOut() {
                 </div>
               </div>
 
-              <div className="receipt-action-buttons">
-                <button
-                  type="button"
-                  onClick={handleDownloadPDF}
-                  disabled={isGeneratingPdf}
-                  style={{
-                    flex: 1,
-                    background: "rgba(255,255,255,.05)",
-                    color: "#fff",
-                    border: "1px solid rgba(255,255,255,.1)",
-                    borderRadius: 8,
-                    padding: "12px",
-                    fontWeight: 700,
-                    fontSize: 14,
-                    cursor: isGeneratingPdf ? "wait" : "pointer",
-                    fontFamily: "'Nunito',sans-serif",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: "8px"
-                  }}
-                >
-                  {isGeneratingPdf ? "⏳ Generating..." : "📄 Download PDF"}
+              <div className="receipt-action-buttons hide-on-print">
+                <button type="button" onClick={handlePrint} style={{ flex: 1, background: "rgba(255,255,255,.05)", color: "#fff", border: "1px solid rgba(255,255,255,.1)", borderRadius: 8, padding: "12px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "'Nunito',sans-serif" }}>
+                  🖨️ Print Receipt
                 </button>
-                <a href={`${networkConfig.networkPassphrase === Networks.TESTNET ? "https://stellar.expert/explorer/testnet/tx/" : "https://stellar.expert/explorer/public/tx/"}${receipt.hash}`} target="_blank" rel="noreferrer" style={{ flex: 1, textDecoration: "none" }}>
+                <a href={`${sysConfig.networkPassphrase === Networks.TESTNET ? "https://stellar.expert/explorer/testnet/tx/" : "https://stellar.expert/explorer/public/tx/"}${receipt.hash}`} target="_blank" rel="noreferrer" style={{ flex: 1, textDecoration: "none" }}>
                   <button type="button" style={{ width: "100%", background: "rgba(10, 37, 64, 0.5)", color: "#93c5fd", border: "1px solid #1e3a8a", borderRadius: 8, padding: "12px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "'Nunito',sans-serif" }}>
-                    🔗 View Explorer
+                    🔗 View on Explorer
                   </button>
                 </a>
               </div>
-              <button type="button" onClick={resetForm} style={{ width: "100%", background: "transparent", color: "#6b7280", border: "none", marginTop: 16, fontSize: 13, fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}>
+              <button type="button" onClick={resetForm} className="hide-on-print" style={{ width: "100%", background: "transparent", color: "#6b7280", border: "none", marginTop: 16, fontSize: 13, fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}>
                 ← Make another cash out
               </button>
             </div>

@@ -361,6 +361,9 @@ export default function CashOut() {
         await saveCashoutToFirestore(shortId, "failed", "", "0.00", totalSpeed, errorMessage);
       }
 
+      // ---------------------------------------------------------
+      // NETWORK MISMATCH DETECTION
+      // ---------------------------------------------------------
       const isNetworkError = errorMessage.toLowerCase().includes("network") || errorMessage.toLowerCase().includes("passphrase");
 
       if (isNetworkError) {
@@ -416,8 +419,8 @@ export default function CashOut() {
 
   const resetForm = () => {
     setReceipt(null);
-    setTokenAmount("0");
-    handleTokenAmountChange("0");
+    setTokenAmount("5000");
+    handleTokenAmountChange("5000");
     setAccountNumber("");
     setAccountName("");
     setQrUploaded(false);
@@ -668,31 +671,15 @@ export default function CashOut() {
               {/* THE ELEMENT WE ARE CONVERTING TO PDF */}
               <div id="printable-receipt" style={{ background: "#ffffff", borderRadius: 16, padding: "40px 32px", position: "relative", overflow: "hidden" }}>
 
-                {/* 100% FAIL-PROOF PDF ALIGNMENT */}
+                {/* 100% FAIL-PROOF PDF ALIGNMENT: Using strict block elements and padding to prevent font clipping */}
                 <div style={{ textAlign: "center", marginBottom: "32px", marginTop: "8px", padding: "10px" }}>
                   <img
                     src="/images/luxphlogo.svg"
                     alt="Lux PH Icon"
-                    style={{
-                      height: "36px",
-                      width: "auto",
-                      display: "inline-block",
-                      verticalAlign: "middle",
-                      marginRight: "12px",
-                      position: "relative",
-                      top: "3px" // Manually nudges the logo down to match the text center perfectly
-                    }}
+                    style={{ height: "36px", width: "auto", display: "inline-block", verticalAlign: "middle", marginRight: "12px" }}
                     crossOrigin="anonymous"
                   />
-                  <span style={{
-                    fontSize: "32px",
-                    fontWeight: 900,
-                    color: "#0f172a",
-                    fontFamily: "'Nunito',sans-serif",
-                    letterSpacing: "1px",
-                    display: "inline-block",
-                    verticalAlign: "middle"
-                  }}>
+                  <span style={{ fontSize: "32px", fontWeight: 900, color: "#0f172a", fontFamily: "'Nunito',sans-serif", letterSpacing: "1px", display: "inline-block", verticalAlign: "middle", paddingTop: "4px" }}>
                     LUX PH
                   </span>
                 </div>

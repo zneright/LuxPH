@@ -361,14 +361,15 @@ export default function CashOut() {
         await saveCashoutToFirestore(shortId, "failed", "", "0.00", totalSpeed, errorMessage);
       }
 
+      // NETWORK MISMATCH DETECTION: If Freighter throws a network/passphrase error
       const isNetworkError = errorMessage.toLowerCase().includes("network") || errorMessage.toLowerCase().includes("passphrase");
 
       if (isNetworkError) {
         const expectedNetwork = networkConfig.networkPassphrase === Networks.TESTNET ? "TESTNET" : "MAINNET (PUBLIC)";
         const wrongNetwork = expectedNetwork === "TESTNET" ? "MAINNET" : "TESTNET";
-        alert(`NETWORK MISMATCH DETECTED!\n\nThe Lux PH System is currently running on ${expectedNetwork}, but your Wallet extension appears to be set to ${wrongNetwork}.\n\nPlease open your wallet extension and switch your network to ${expectedNetwork} to continue.`);
+        alert(`NETWORK MISMATCH: The System is running on ${expectedNetwork}, but your Wallet appears to be on ${wrongNetwork}.\n\nPlease open your wallet extension and switch your network to ${expectedNetwork}.`);
       } else if (errorMessage.toLowerCase().includes("decline") || errorMessage.toLowerCase().includes("cancel") || errorMessage.toLowerCase().includes("reject")) {
-        alert("Transaction was cancelled by user.");
+        alert("Transaction was cancelled.");
       } else {
         alert(`Cash Out Failed: ${errorMessage}`);
       }
@@ -383,14 +384,11 @@ export default function CashOut() {
 
     setIsGeneratingPdf(true);
     try {
-      // Allow fonts to fully render before screenshotting
-      await document.fonts.ready;
-
       const canvas = await html2canvas(element, {
         scale: 2,
         useCORS: true,
         backgroundColor: "#ffffff",
-        logging: false,
+        logging: false
       });
 
       const imgData = canvas.toDataURL("image/png");
@@ -416,8 +414,8 @@ export default function CashOut() {
 
   const resetForm = () => {
     setReceipt(null);
-    setTokenAmount("0");
-    handleTokenAmountChange("0");
+    setTokenAmount("5000");
+    handleTokenAmountChange("5000");
     setAccountNumber("");
     setAccountName("");
     setQrUploaded(false);
@@ -668,34 +666,19 @@ export default function CashOut() {
               {/* THE ELEMENT WE ARE CONVERTING TO PDF */}
               <div id="printable-receipt" style={{ background: "#ffffff", borderRadius: 16, padding: "40px 32px", position: "relative", overflow: "hidden" }}>
 
-                {/* 100% FAIL-PROOF PDF ALIGNMENT */}
-                <div style={{ textAlign: "center", marginBottom: "32px", marginTop: "8px", padding: "10px" }}>
-                  <img
-                    src="/images/luxphlogo.svg"
-                    alt="Lux PH Icon"
-                    style={{
-                      height: "36px",
-                      width: "auto",
-                      display: "inline-block",
-                      verticalAlign: "middle",
-                      marginRight: "12px",
-                      position: "relative",
-                      top: "3px" // Manually nudges the logo down to match the text center perfectly
-                    }}
-                    crossOrigin="anonymous"
-                  />
-                  <span style={{
-                    fontSize: "32px",
-                    fontWeight: 900,
-                    color: "#0f172a",
-                    fontFamily: "'Nunito',sans-serif",
-                    letterSpacing: "1px",
-                    display: "inline-block",
-                    verticalAlign: "middle"
-                  }}>
-                    LUX PH
-                  </span>
-                </div>
+                {/* 100% FAIL-PROOF PDF HTML TABLE ALIGNMENT FOR LOGO + TEXT */}
+                <table style={{ margin: "0 auto 32px auto", borderCollapse: "collapse", border: "none" }}>
+                  <tbody>
+                    <tr>
+                      <td style={{ padding: "0 12px 0 0", verticalAlign: "middle", border: "none" }}>
+                        <img src="/images/luxphlogo.svg" alt="Lux PH Icon" style={{ display: "block", height: "38px", width: "auto" }} crossOrigin="anonymous" />
+                      </td>
+                      <td style={{ padding: "0", verticalAlign: "middle", border: "none" }}>
+                        <span style={{ fontSize: "36px", fontWeight: 900, color: "#0f172a", fontFamily: "'Nunito',sans-serif", letterSpacing: "0.5px", lineHeight: "38px", display: "block" }}>LUX PH</span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
 
                 <div style={{ textAlign: "center", marginBottom: 36 }}>
                   <div style={{ width: 72, height: 72, background: "#10b981", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", color: "#fff" }}>

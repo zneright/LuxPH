@@ -8,8 +8,7 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { motion, useScroll, useTransform } from "framer-motion";
-import { EarthCanvas } from "../components/EarthCanvas";
-import AnimatedLogo from "../components/AnimatedLogo";
+import { EarthCanvas } from "../components/EarthCanvas"; // Assuming components folder is adjacent
 
 // ─── ANIMATION VARIANTS ────────────────────────────────────────────────────
 const fadeUp = {
@@ -309,7 +308,36 @@ export default function LandingPage() {
           <div className="flex items-center justify-between px-4 sm:px-6 py-4 max-w-7xl mx-auto">
             {/* Logo */}
             <div className="flex items-center gap-3">
-              <AnimatedLogo />
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 35 35"
+                className="w-8 h-8 flex-shrink-0"
+              >
+                {[
+                  { color: "#10B981" },
+                  { color: "#8b5cf6" },
+                  { color: "#3b82f6" },
+                ].map((s, i) => (
+                  <rect
+                    key={i}
+                    width="13"
+                    height="13"
+                    rx="3"
+                    fill={s.color}
+                    transform={`translate(${i === 1 ? 16 : 0}, ${i === 2 ? 16 : 0})`}
+                  />
+                ))}
+              </svg>
+              <span
+                className="text-lg font-black tracking-[0.2em]"
+                style={{
+                  background: "linear-gradient(90deg,#fff,#a5b4fc)",
+                  WebkitBackgroundClip: "text",
+                  WebkitTextFillColor: "transparent",
+                }}
+              >
+                LUX PH
+              </span>
             </div>
 
             {/* Nav links */}
@@ -1210,7 +1238,10 @@ export default function LandingPage() {
             {/* Brand Column */}
             <div>
               <div className="flex items-center gap-2 mb-5">
-                <AnimatedLogo />
+                <Zap size={16} className="text-indigo-400" />
+                <span className="text-white font-black tracking-widest text-sm">
+                  LUX PH
+                </span>
               </div>
               <p className="mb-4 text-xs leading-relaxed">
                 Lux PH defines decentralized on-chain finality engineered

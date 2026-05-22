@@ -538,7 +538,7 @@ export default function CreateInvoice() {
           <span style={{ color: "#9ca3af", fontSize: 12, textTransform: "uppercase", letterSpacing: "0.05em", fontFamily: "'DM Mono',monospace" }}>{token} Balance:</span>
           <span style={{ color: "#fff", fontSize: 16, fontWeight: 700, fontFamily: "'DM Mono',monospace", display: "flex", alignItems: "center", gap: 8 }}>
             {isBalanceHidden ? "••••••••" : `${balance}`}
-            <span style={{ fontSize: 14, opacity: 0.7 }}>{isBalanceHidden ? "" : ""}</span>
+            <span style={{ fontSize: 14, opacity: 0.7 }}>{isBalanceHidden ? "👁️" : ""}</span>
           </span>
         </div>
       </div>

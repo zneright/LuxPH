@@ -16,8 +16,6 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 import { LoadingOverlay } from "../../components/ui/LoadingOverlay";
 import MonthlyUsageCard from "../../components/dashboard/MonthlyUsageCard";
-import { jsPDF } from "jspdf";
-import html2canvas from "html2canvas";
 
 const FALLBACK_ISSUER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
 const FALLBACK_USDC = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
@@ -59,10 +57,6 @@ export default function CreateInvoice() {
   const [monthlyUsage, setMonthlyUsage] = useState(0);
   const [isSubscribed, setIsSubscribed] = useState(false);
 
-  // --- BALANCE STATE ---
-  const [balance, setBalance] = useState("0.00");
-  const [isBalanceHidden, setIsBalanceHidden] = useState(true);
-
   // --- VAULT STATE ---
   const [vaultConfig, setVaultConfig] = useState<any>(null);
   const [vaultSecretKey, setVaultSecretKey] = useState<string | null>(null);
@@ -74,12 +68,11 @@ export default function CreateInvoice() {
 
   const [paymentStatus, setPaymentStatus] = useState<"idle" | "listening" | "success">("idle");
   const [receiptHash, setReceiptHash] = useState("");
-  const [receiptDate, setReceiptDate] = useState("");
   const [speeds, setSpeeds] = useState({ network: "0.00", total: "0.00" });
   const [isLoading, setIsLoading] = useState(true);
-  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState("Initializing dashboard...");
 
+  // Changed to useRef so closures always have instant access to the timestamp
   const paymentStartTimeRef = useRef<number | null>(null);
   const streamCloserRef = useRef<(() => void) | null>(null);
   const processedTxsRef = useRef<Set<string>>(new Set());
@@ -135,28 +128,6 @@ export default function CreateInvoice() {
     initSystem();
   }, []);
 
-  // Fetch Balance
-  useEffect(() => {
-    if (!merchantAddress) return;
-    const fetchBalance = async () => {
-      try {
-        const server = new Horizon.Server(sysConfig.horizonUrl);
-        const account = await server.loadAccount(merchantAddress);
-
-        const balanceObj = account.balances.find((b: any) => {
-          if (token === "XLM") return b.asset_type === "native";
-          const targetIssuer = token === "PHPC" ? sysConfig.phpcIssuer : sysConfig.usdcIssuer;
-          return b.asset_code === token && b.asset_issuer === targetIssuer;
-        });
-
-        setBalance(balanceObj ? parseFloat(balanceObj.balance).toLocaleString() : "0.00");
-      } catch (e) {
-        setBalance("0.00");
-      }
-    };
-    fetchBalance();
-  }, [merchantAddress, token, sysConfig.horizonUrl, sysConfig.phpcIssuer, sysConfig.usdcIssuer, paymentStatus]); // Refresh balance when paymentStatus changes
-
   const fetchUsage = async (uid: string) => {
     try {
       const invoicesRef = collection(db, `merchants/${uid}/invoices`);
@@ -176,6 +147,12 @@ export default function CreateInvoice() {
       setMonthlyUsage(currentMonthVolume);
     } catch (err) { console.error("Usage fetch failed:", err); }
   };
+
+  useEffect(() => {
+    if (paymentStatus === "success" && auth.currentUser) {
+      fetchUsage(auth.currentUser.uid);
+    }
+  }, [paymentStatus]);
 
   useEffect(() => {
     let isMounted = true;
@@ -305,6 +282,7 @@ export default function CreateInvoice() {
       const response = await server.submitTransaction(tx);
 
       const successMsg = `Instant vault allocation successful: ${deduction.toFixed(2)} ${vaultConfig.targetAsset}. Tx: ${response.hash.substring(0, 8)}...`;
+      console.log(successMsg);
       if (auth.currentUser) {
         await addDoc(collection(db, `merchants/${auth.currentUser.uid}/telemetry`), {
           msg: successMsg,
@@ -316,6 +294,7 @@ export default function CreateInvoice() {
     } catch (error: any) {
       const errCodes = error.response?.data?.extras?.result_codes?.operations?.join(",") || error.message || "Unknown ledger error";
       const errMsg = `Instant vault lock failed: ${errCodes}`;
+      console.error(errMsg);
 
       if (auth.currentUser) {
         await addDoc(collection(db, `merchants/${auth.currentUser.uid}/telemetry`), {
@@ -388,7 +367,6 @@ export default function CreateInvoice() {
           if (incomingMemo !== activeMemo.trim()) return;
 
           setReceiptHash(transaction.hash);
-          setReceiptDate(new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }));
           setIsLoading(true);
 
           if (vaultConfig && vaultSecretKey) {
@@ -459,35 +437,6 @@ export default function CreateInvoice() {
     setSpeeds({ network: "0.00", total: "0.00" });
   };
 
-  const handleDownloadPDF = async () => {
-    const element = document.getElementById("printable-receipt");
-    if (!element) return;
-
-    setIsGeneratingPdf(true);
-    try {
-      await document.fonts.ready;
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: "#ffffff",
-        logging: false,
-      });
-
-      const imgData = canvas.toDataURL("image/png");
-      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-
-      pdf.addImage(imgData, "PNG", 0, 10, pdfWidth, pdfHeight);
-      pdf.save(`LUXPH_Receipt_${memo}.pdf`);
-    } catch (error) {
-      console.error("Failed to generate PDF:", error);
-      alert("Failed to generate PDF. Check console for details.");
-    } finally {
-      setIsGeneratingPdf(false);
-    }
-  };
-
   const isTestnet = sysConfig.horizonUrl.includes("testnet");
   const networkName = isTestnet ? "TESTNET" : "MAINNET";
 
@@ -499,7 +448,6 @@ export default function CreateInvoice() {
         .inv-card-left { backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,.06); border-radius: 24px; padding: 32px; position: relative; overflow: hidden; }
         .inv-card-right { backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,.06); border-radius: 24px; display: flex; flexDirection: column; align-items: center; justify-content: center; padding: 40px; position: relative; overflow: hidden; min-height: 450px; box-sizing: border-box; }
         .qr-frame-box { position: relative; width: 100%; max-width: 260px; aspect-ratio: 1/1; margin-bottom: 24px; display: flex; items-center: center; justify-content: center; background: #ffffff; border-radius: 32px; padding: 20px; box-sizing: border-box; }
-        .receipt-action-buttons { display: flex; gap: 12px; width: 100%; margin-top: 16px; }
 
         @media (max-width: 992px) {
           .inv-layout-split { grid-template-columns: 1fr; gap: 24px; }
@@ -509,7 +457,6 @@ export default function CreateInvoice() {
           .inv-dual-fields > div:nth-child(2) { display: none !important; }
           .inv-card-left, .inv-card-right { padding: 20px; min-height: auto; }
           .qr-frame-box { max-width: 220px; padding: 12px; }
-          .receipt-action-buttons { flex-direction: column; }
         }
       `}</style>
 
@@ -525,22 +472,11 @@ export default function CreateInvoice() {
         {isLoading && <LoadingOverlay isLoading={isLoading} message={loadingMsg} />}
       </AnimatePresence>
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 16, marginBottom: 24 }}>
-        <div>
-          <h1 style={{ fontSize: 36, fontWeight: 900, fontFamily: "'Nunito',sans-serif", color: "#fff", margin: 0, letterSpacing: "-0.02em" }}>
-            Receive Payment
-          </h1>
-          <p style={{ color: "#9ca3af", fontSize: 14, marginTop: 6 }}>Generate a payment QR code for your customers.</p>
-        </div>
-
-        {/* TOGGLEABLE BALANCE UI */}
-        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, cursor: "pointer", transition: "all 0.2s" }} onClick={() => setIsBalanceHidden(!isBalanceHidden)}>
-          <span style={{ color: "#9ca3af", fontSize: 12, textTransform: "uppercase", letterSpacing: "0.05em", fontFamily: "'DM Mono',monospace" }}>{token} Balance:</span>
-          <span style={{ color: "#fff", fontSize: 16, fontWeight: 700, fontFamily: "'DM Mono',monospace", display: "flex", alignItems: "center", gap: 8 }}>
-            {isBalanceHidden ? "••••••••" : `${balance}`}
-            <span style={{ fontSize: 14, opacity: 0.7 }}>{isBalanceHidden ? "" : ""}</span>
-          </span>
-        </div>
+      <div style={{ marginBottom: 32 }}>
+        <h1 style={{ fontSize: 36, fontWeight: 900, fontFamily: "'Nunito',sans-serif", color: "#fff", margin: 0, letterSpacing: "-0.02em" }}>
+          Receive Payment
+        </h1>
+        <p style={{ color: "#9ca3af", fontSize: 14, marginTop: 6 }}>Generate a payment QR code for your customers.</p>
       </div>
 
       <MonthlyUsageCard
@@ -641,9 +577,9 @@ export default function CreateInvoice() {
           } : {}}
           transition={{ duration: 5, delay: 2.5, repeat: Infinity, ease: "easeInOut" }}
           className="inv-card-right"
-          style={{ background: isSubscribed ? "rgba(15, 17, 26, 0.6)" : "rgba(255,255,255,.04)", padding: paymentStatus === "success" ? "24px" : "40px" }}
+          style={{ background: isSubscribed ? "rgba(15, 17, 26, 0.6)" : "rgba(255,255,255,.04)" }}
         >
-          {isSubscribed && paymentStatus !== "success" && (
+          {isSubscribed && (
             <>
               <FloatingNode delay={0} x="15%" y="20%" size={6} color="#f59e0b" blur={2} />
               <FloatingNode delay={0.7} x="85%" y="30%" size={12} color="#10b981" blur={4} />
@@ -685,127 +621,41 @@ export default function CreateInvoice() {
           )}
 
           {paymentStatus === "success" && (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.4, type: "spring", bounce: 0.4 }}
-              style={{ display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}
-            >
-              <div style={{ width: "100%", maxWidth: 480 }}>
-                {/* IDENTICAL RECEIPT PDF CONTAINER */}
-                <div id="printable-receipt" style={{ background: "#ffffff", borderRadius: 16, padding: "40px 32px", position: "relative", overflow: "hidden" }}>
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", bounce: 0.5 }} style={{ textAlign: "center", width: "100%", zIndex: 10 }}>
+              <div style={{ width: 80, height: 80, background: "linear-gradient(135deg, #10b981, #059669)", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 24px", fontSize: 40, color: "#fff", boxShadow: "0 10px 30px rgba(16,185,129,0.4)" }}>✓</div>
+              <h3 style={{ color: "#fff", margin: "0 0 8px 0", fontFamily: "'Nunito',sans-serif", fontSize: 26, fontWeight: 900 }}>Payment Received!</h3>
+              <p style={{ color: "#a7f3d0", fontSize: 22, fontWeight: 800, margin: "0 0 24px 0" }}>
+                {parseFloat(amount || "0").toLocaleString()} {token}
+              </p>
 
-                  <div style={{ textAlign: "center", marginBottom: "32px", marginTop: "8px", padding: "10px" }}>
-                    <img
-                      src="/images/luxphlogo.svg"
-                      alt="Lux PH Icon"
-                      style={{
-                        height: "36px",
-                        width: "auto",
-                        display: "inline-block",
-                        verticalAlign: "middle",
-                        marginRight: "12px",
-                        position: "relative",
-                        top: "8px"
-                      }}
-                      crossOrigin="anonymous"
-                    />
-                    <span style={{
-                      fontSize: "32px",
-                      fontWeight: 900,
-                      color: "#0f172a",
-                      fontFamily: "'Nunito',sans-serif",
-                      letterSpacing: "1px",
-                      display: "inline-block",
-                      verticalAlign: "middle"
-                    }}>
-                      LUX PH
-                    </span>
-                  </div>
-
-                  <div style={{ textAlign: "center", marginBottom: 36 }}>
-                    <div style={{ width: 72, height: 72, background: "#10b981", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", color: "#fff" }}>
-                      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="20 6 9 17 4 12"></polyline>
-                      </svg>
-                    </div>
-
-                    <h2 style={{ margin: 0, color: "#0f172a", fontFamily: "'Nunito',sans-serif", fontSize: 26, fontWeight: 900 }}>Payment Received</h2>
-                    <p style={{ margin: "6px 0 0 0", color: "#64748b", fontSize: 14 }}>Transaction successfully settled on-chain.</p>
-                  </div>
-
-                  <div style={{ borderTop: "2px dashed #e5e7eb", borderBottom: "2px dashed #e5e7eb", padding: "24px 0", marginBottom: 24, display: "flex", flexDirection: "column", gap: 16 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span style={{ color: "#6b7280", fontSize: 13 }}>Invoice ID</span>
-                      <span style={{ color: "#111827", fontSize: 13, fontWeight: 700, fontFamily: "'DM Mono',monospace" }}>{memo}</span>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span style={{ color: "#6b7280", fontSize: 13 }}>Date & Time</span>
-                      <span style={{ color: "#111827", fontSize: 13, fontWeight: 600 }}>{receiptDate}</span>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span style={{ color: "#6b7280", fontSize: 13 }}>Description</span>
-                      <span style={{ color: "#111827", fontSize: 13, fontWeight: 600 }}>{description || "Payment"}</span>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span style={{ color: "#6b7280", fontSize: 13 }}>Amount Received</span>
-                      <span style={{ color: "#10b981", fontSize: 13, fontWeight: 700 }}>+ {parseFloat(amount).toLocaleString()} {token}</span>
-                    </div>
-                  </div>
-
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-                    <span style={{ color: "#374151", fontSize: 16, fontWeight: 700 }}>{fiatCurrency} Value</span>
-                    <span style={{ color: "#10b981", fontSize: 28, fontWeight: 800, fontFamily: "'Nunito',sans-serif" }}>
-                      {fiatCurrency === "PHP" ? "₱" : "$"}{parseFloat(amountInFiat).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                    </span>
-                  </div>
-
-                  <div style={{ textAlign: "center", fontSize: 11, color: "#9ca3af", fontFamily: "'DM Mono',monospace", wordBreak: "break-all", background: "#f3f4f6", padding: 12, borderRadius: 8 }}>
-                    <div style={{ color: "#6b7280", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em", fontSize: 10 }}>Stellar Transaction Hash</div>
-                    {receiptHash}
-                  </div>
-
-                  <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 24, flexWrap: "wrap" }}>
-                    <div style={{ background: "rgba(16,185,129,0.1)", color: "#10b981", border: "1px solid rgba(16,185,129,0.2)", borderRadius: 20, padding: "6px 14px", fontSize: 12, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>
-                      ⚡ Network: {speeds.network}s
-                    </div>
-                    <div style={{ background: "rgba(10, 37, 64, 0.1)", color: "#0a2540", border: "1px solid rgba(10, 37, 64, 0.2)", borderRadius: 20, padding: "6px 14px", fontSize: 12, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>
-                      ⏱️ Total: {speeds.total}s
-                    </div>
-                    <div style={{ background: isTestnet ? "rgba(239,68,68,0.1)" : "rgba(59,130,246,0.1)", color: isTestnet ? "#ef4444" : "#3b82f6", border: isTestnet ? "1px solid rgba(239,68,68,0.2)" : "1px solid rgba(59,130,246,0.2)", borderRadius: 20, padding: "6px 14px", fontSize: 12, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>
-                      🌐 {networkName}
-                    </div>
-                  </div>
+              <div style={{ background: "rgba(0,0,0,.4)", border: "1px solid rgba(255,255,255,0.08)", padding: 20, borderRadius: 16, textAlign: "left", marginBottom: 24, backdropFilter: "blur(12px)" }}>
+                <div style={{ fontSize: 10, color: "#9ca3af", textTransform: "uppercase", marginBottom: 4, fontWeight: 700 }}>Invoice ID</div>
+                <div style={{ color: "#fff", fontFamily: "'DM Mono',monospace", fontSize: 14, marginBottom: 16 }}>{memo}</div>
+                <div style={{ fontSize: 10, color: "#9ca3af", textTransform: "uppercase", marginBottom: 4, fontWeight: 700 }}>Tx Hash</div>
+                <div style={{ color: "#34d399", fontSize: 12, wordBreak: "break-all", fontFamily: "'DM Mono',monospace" }}>
+                  {receiptHash.substring(0, 24)}...
                 </div>
+              </div>
 
-                <div className="receipt-action-buttons">
-                  <button
-                    type="button"
-                    onClick={handleDownloadPDF}
-                    disabled={isGeneratingPdf}
-                    style={{
-                      flex: 1,
-                      background: "rgba(255,255,255,.05)",
-                      color: "#fff",
-                      border: "1px solid rgba(255,255,255,.1)",
-                      borderRadius: 8,
-                      padding: "12px",
-                      fontWeight: 700,
-                      fontSize: 14,
-                      cursor: isGeneratingPdf ? "wait" : "pointer",
-                      fontFamily: "'Nunito',sans-serif",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: "8px"
-                    }}
-                  >
-                    {isGeneratingPdf ? "⏳ Generating..." : "📄 Download PDF"}
-                  </button>
-                  <button type="button" onClick={generateNewInvoiceId} style={{ flex: 1, background: "rgba(10, 37, 64, 0.5)", color: "#93c5fd", border: "1px solid #1e3a8a", borderRadius: 8, padding: "12px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "'Nunito',sans-serif" }}>
-                    + New Invoice
-                  </button>
+              <div style={{ display: "flex", gap: 12, justifyContent: "center", marginBottom: 24, flexWrap: "wrap" }}>
+                <div style={{ background: "rgba(16,185,129,0.15)", color: "#10b981", border: "1px solid rgba(16,185,129,0.3)", borderRadius: 20, padding: "8px 14px", fontSize: 12, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>
+                  ⚡ Net: {speeds.network}s
                 </div>
+                <div style={{ background: "rgba(167, 139, 250, 0.15)", color: "#a78bfa", border: "1px solid rgba(167, 139, 250, 0.3)", borderRadius: 20, padding: "8px 14px", fontSize: 12, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>
+                  ⏱️ Total: {speeds.total}s
+                </div>
+                <div style={{ background: isTestnet ? "rgba(239,68,68,0.15)" : "rgba(59,130,246,0.15)", color: isTestnet ? "#ef4444" : "#3b82f6", border: isTestnet ? "1px solid rgba(239,68,68,0.3)" : "1px solid rgba(59,130,246,0.3)", borderRadius: 20, padding: "8px 14px", fontSize: 12, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>
+                  🌐 {networkName}
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: "12px" }}>
+                <button type="button" onClick={() => window.print()} style={{ flex: 1, background: "rgba(255,255,255,.05)", color: "#fff", border: "1px solid rgba(255,255,255,.1)", borderRadius: 8, padding: "12px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "'Nunito',sans-serif" }}>
+                  🖨️ Print
+                </button>
+                <button type="button" onClick={generateNewInvoiceId} style={{ flex: 2, background: "rgba(255,255,255,.05)", color: "#fff", border: "1px solid rgba(255,255,255,.1)", borderRadius: 8, padding: "12px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "'Nunito',sans-serif" }}>
+                  Make Another Invoice
+                </button>
               </div>
             </motion.div>
           )}
