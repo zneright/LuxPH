@@ -99,6 +99,8 @@ npm run preview
 | Name | Role | GitHub |
 |---|---|---|
 | Renz Jericho Buday | Full-Stack Developer & Product Lead | [@zneright](https://github.com/zneright) |
+| Nishia Pinlac | Front End Lead | [nsh15-cmd](https://github.com/nsh15-cmd) |
+| Liezl Casabuena | UI Designer | n/a |
 
 ## 📜 License
 MIT
@@ -117,10 +119,10 @@ MIT
 - [x] README.md following required format
 - [x] Testnet deployment: https://stellar.expert/explorer/testnet/account/GACS6IIZAARYJ2SGVLVADHDASI2TII2YBZGECCBE6WOSKOB37TXZ4WJV
 - [x] Mainnet deployment: https://stellar.expert/explorer/public/tx/af82ef715998918e7edcc1ede9ce2c975b4c64fe33e0f618a6ae2a5ba8bcac9d
-- [ ] Testnet screenshot (need to add to `./screenshots/testnet.png`)
-- [ ] Mainnet screenshot (need to add to `./screenshots/mainnet.png`)
-- [ ] Demo video (2-3 minutes)
-- [ ] Pitch deck (max 10 slides)
+- [x] Testnet screenshot (need to add to `./screenshots/testnet.png`)
+- [x] Mainnet screenshot (need to add to `./screenshots/mainnet.png`)
+- [x] Demo video (2-3 minutes)
+- [x] Pitch deck (max 10 slides)
 - [ ] Working MVP with Stellar integration
 
 ### 🔗 Additional Resources
