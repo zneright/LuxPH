@@ -310,7 +310,7 @@ export default function LandingPage() {
             {/* Logo */}
             <div className="flex items-center gap-3">
               <AnimatedLogo />
-              <div className="font-black text-2xl text-white tracking-wide mb-2">LUX <span className="text-[#7c3aed]">PH</span></div>
+              
             </div>
 
             {/* Nav links */}
@@ -1212,7 +1212,7 @@ export default function LandingPage() {
             <div>
               <div className="flex items-center gap-2 mb-5">
                 <AnimatedLogo />
-                <div className="font-black text-2xl text-white tracking-wide mb-2">LUX <span className="text-[#7c3aed]">PH</span></div>
+
               </div>
               <p className="mb-4 text-xs leading-relaxed">
                 Lux PH defines decentralized on-chain finality engineered
