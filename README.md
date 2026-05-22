@@ -41,7 +41,7 @@ LuxPH was built to empower Filipino merchants and individuals with blockchain-ba
 ## 🛠️ Tech Stack
 - **Frontend:** React 19.2, TypeScript 6.0, Vite 8.0, Tailwind CSS 4.3, Framer Motion 12.38
 - **Backend:** Firebase (Authentication, Firestore Database, Cloud Functions, Hosting)
-- **Blockchain:** Stellar Soroban Smart Contracts, Horizon API, Stellar SDK v15, Soroban Client v1.0
+- **Blockchain:** Horizon API, Stellar SDK v15
 - **Wallets:** Freighter API v6.0, Stellar Wallets Kit v2.2, Albedo v0.1
 - **UI & Utilities:** Lucide React, React QR Scanner, jsPDF, html2canvas
 
