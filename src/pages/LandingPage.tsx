@@ -362,15 +362,15 @@ export default function LandingPage() {
             <div className="flex items-center gap-2 sm:gap-3">
               <Link
                 to="/signin"
-                className="hidden sm:block px-4 py-2 text-xs font-bold tracking-wide text-gray-300 border border-white/10 rounded-lg hover:bg-white/5 transition-all duration-300 whitespace-nowrap"
+                className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold tracking-wide text-gray-300 border border-white/10 rounded-lg hover:bg-white/5 transition-all duration-300 whitespace-nowrap"
               >
-                Merchant Login
+                <span className="hidden sm:inline">Merchant </span>Login
               </Link>
               <Link
                 to="/signup"
-                className="px-4 py-2 text-xs font-bold tracking-wide bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg transition-all duration-300 shadow-lg shadow-indigo-500/20 whitespace-nowrap"
+                className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold tracking-wide bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg transition-all duration-300 shadow-lg shadow-indigo-500/20 whitespace-nowrap"
               >
-                Create Account
+                <span className="hidden sm:inline">Create </span>Account
               </Link>
             </div>
           </div>
@@ -446,16 +446,6 @@ export default function LandingPage() {
             >
               Start Accepting Payments
               <ArrowRight className="w-4 h-4 transition-transform duration-300 group-hover:translate-x-1" />
-            </Link>
-            <Link
-              to="/api-documentation"
-              className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-4 rounded-xl text-sm font-semibold text-gray-300 border border-white/10 hover:border-white/20 hover:text-white transition-all duration-300"
-              style={{
-                backdropFilter: "blur(10px)",
-                background: "rgba(255,255,255,0.03)",
-              }}
-            >
-              View Architecture
             </Link>
           </motion.div>
 
@@ -823,9 +813,11 @@ export default function LandingPage() {
                 ))}
               </div>
 
-              <Link
-                to="/api-documentation"
-                className="flex items-center justify-center lg:justify-start gap-2 px-7 py-3.5 text-sm font-semibold text-gray-200 border border-white/10 rounded-xl hover:border-indigo-400/40 hover:text-white transition-all duration-300 group w-full sm:w-auto"
+              <a
+                href="https://github.com/zneright/LuxPH"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-center lg:justify-start gap-2 px-7 py-3.5 text-sm font-semibold text-gray-200 border border-white/10 rounded-xl hover:border-indigo-400/40 hover:text-white transition-all duration-300 group w-2 sm:w-auto"
                 style={{
                   backdropFilter: "blur(10px)",
                   background: "rgba(255,255,255,0.02)",
@@ -833,7 +825,7 @@ export default function LandingPage() {
               >
                 View System Architecture
                 <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform duration-300" />
-              </Link>
+              </a>
             </motion.div>
           </div>
         </motion.section>
