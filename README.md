@@ -187,7 +187,6 @@ npm run preview
 - [Firebase Documentation](https://firebase.google.com/docs)
 - [React Router Docs](https://reactrouter.com/)
 - [Stellar Expert Explorer](https://stellar.expert/explorer/testnet)
-- [Google Drive Folder](https://drive.google.com/file/d/1mXpSKIQlUtuE6EUe2GWz6v0bQiahBu0-/view?usp=drive_link)
 
 ---
 
