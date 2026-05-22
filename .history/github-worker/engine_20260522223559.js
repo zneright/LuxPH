@@ -43,11 +43,7 @@ async function runEngine() {
             for (const payment of payments.records) {
                 latestCursor = payment.paging_token;
 
-                // --- NEW: Correctly identify Native XLM vs Custom Assets ---
-                const isNative = payment.asset_type === "native" && config.targetAsset === "XLM";
-                const isAssetMatch = payment.asset_code === config.targetAsset;
-
-                if (payment.to === kp.publicKey() && (isNative || isAssetMatch)) {
+                if (payment.to === kp.publicKey() && payment.asset_code === config.targetAsset) {
                     const amount = parseFloat(payment.amount);
                     const deduction = amount * (config.deductionPercentage / 100);
 
@@ -62,16 +58,8 @@ async function runEngine() {
                             Claimant.predicateBeforeAbsoluteTime(Math.floor(unlockDate.getTime() / 1000).toString())
                         );
 
-                        // --- NEW: Construct the correct Stellar Asset Object ---
-                        let assetToLock;
-                        if (config.targetAsset === "XLM") {
-                            assetToLock = Asset.native();
-                        } else {
-                            assetToLock = new Asset(config.targetAsset, payment.asset_issuer);
-                        }
-
                         const op = Operation.createClaimableBalance({
-                            asset: assetToLock,
+                            asset: new Asset(config.targetAsset, payment.asset_issuer),
                             amount: deductionStr,
                             claimants: [new Claimant(kp.publicKey(), timePredicate)]
                         });
@@ -99,13 +87,25 @@ async function runEngine() {
                 }
             }
 
-            // Execute the script
-            runEngine()
-                .then(() => {
-                    console.log("Engine run complete.");
-                    process.exit(0);
-                })
-                .catch((error) => {
-                    console.error("Critical Engine Failure:", error);
-                    process.exit(1);
-                });
+            if (latestCursor !== lastCursor) {
+                await doc.ref.update({ lastProcessedCursor: latestCursor });
+            }
+
+            console.log(`Processed ${processedCount} new deductions for merchant: ${doc.id}`);
+
+        } catch (error) {
+            console.error(`Error processing merchant ${doc.id}:`, error.message);
+        }
+    }
+}
+
+// Execute the script
+runEngine()
+    .then(() => {
+        console.log("Engine run complete.");
+        process.exit(0);
+    })
+    .catch((error) => {
+        console.error("Critical Engine Failure:", error);
+        process.exit(1);
+    });
