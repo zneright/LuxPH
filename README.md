@@ -51,7 +51,7 @@ LuxPH was built to empower Filipino merchants and individuals with blockchain-ba
 
 ### 1. Clone the repository
 ```bash
-git clone [https://github.com/zneright/LuxPH.git](https://github.com/zneright/LuxPH.git)
+git clone [https://github.com/zneright/LuxPH.git]
 cd LuxPH
 
 # Install dependencies
