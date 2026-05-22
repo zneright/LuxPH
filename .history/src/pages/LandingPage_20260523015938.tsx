@@ -310,7 +310,6 @@ export default function LandingPage() {
             {/* Logo */}
             <div className="flex items-center gap-3">
               <AnimatedLogo />
-              <div className="font-black text-2xl text-white tracking-wide mb-2">LUX <span className="text-[#7c3aed]">PH</span></div>
             </div>
 
             {/* Nav links */}
