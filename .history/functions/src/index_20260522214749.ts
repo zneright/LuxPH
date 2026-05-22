@@ -1,4 +1,4 @@
-import { onSchedule } from "firebase-functions/v2/scheduler";
+import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import {
     Horizon,
@@ -24,8 +24,8 @@ interface VaultConfig {
     targetAsset: string;
 }
 
-// V2 Scheduled Function: Runs every 10 minutes
-export const processVaultDeductions = onSchedule("every 10 minutes", async (event) => {
+// Scheduled to run every 10 minutes
+export const processVaultDeductions = functions.pubsub.schedule("every 10 minutes").onRun(async (context) => {
     // 1. Fetch all merchants who have the vault active
     const merchantsSnapshot = await db.collection("merchants").where("vaultConfig.isEnabled", "==", true).get();
 

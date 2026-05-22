@@ -1,58 +1,48 @@
-import { onSchedule } from "firebase-functions/v2/scheduler";
-import * as admin from "firebase-admin";
-import {
-    Horizon,
-    Keypair,
-    Asset,
-    Operation,
-    Claimant,
-    TransactionBuilder,
-    Networks,
-    BASE_FEE
-} from "@stellar/stellar-sdk";
+const admin = require("firebase-admin");
+const { Horizon, Keypair, Asset, Operation, Claimant, TransactionBuilder, Networks, BASE_FEE } = require("@stellar/stellar-sdk");
 
-// Initialize Firebase Admin to interact with Firestore
-admin.initializeApp();
-const db = admin.firestore();
-
-// Define the interface for strict typing
-interface VaultConfig {
-    isEnabled: boolean;
-    deductionPercentage: number;
-    lockDurationDays: number;
-    networkUrl: string;
-    targetAsset: string;
+// 1. Authenticate with Firebase using GitHub Secrets
+try {
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount)
+    });
+} catch (error) {
+    console.error("Failed to parse Firebase credentials. Is the FIREBASE_SERVICE_ACCOUNT secret set?");
+    process.exit(1);
 }
 
-// V2 Scheduled Function: Runs every 10 minutes
-export const processVaultDeductions = onSchedule("every 10 minutes", async (event) => {
-    // 1. Fetch all merchants who have the vault active
+const db = admin.firestore();
+
+async function runEngine() {
+    console.log("Starting Contingency Vault Engine...");
     const merchantsSnapshot = await db.collection("merchants").where("vaultConfig.isEnabled", "==", true).get();
+
+    if (merchantsSnapshot.empty) {
+        console.log("No active vaults found. Exiting.");
+        return;
+    }
 
     for (const doc of merchantsSnapshot.docs) {
         const data = doc.data();
-        const config = data.vaultConfig as VaultConfig;
-
-        // IMPORTANT: In a production build, decrypt this key before using it.
+        const config = data.vaultConfig;
         const secretKey = data.encryptedSecretKey;
+
         if (!secretKey) continue;
 
         try {
             const kp = Keypair.fromSecret(secretKey);
             const server = new Horizon.Server(config.networkUrl);
 
-            // 2. Fetch payments since the last saved cursor
             const lastCursor = data.lastProcessedCursor || "now";
             const payments = await server.payments().forAccount(kp.publicKey()).cursor(lastCursor).order("asc").limit(50).call();
 
             let latestCursor = lastCursor;
+            let processedCount = 0;
 
-            // 3. Process new incoming transactions
-            for (const record of payments.records) {
-                const payment = record as any; // Casting to any to read custom asset properties easily
+            for (const payment of payments.records) {
                 latestCursor = payment.paging_token;
 
-                // Verify this is a deposit TO the merchant in the correct target asset
                 if (payment.to === kp.publicKey() && payment.asset_code === config.targetAsset) {
                     const amount = parseFloat(payment.amount);
                     const deduction = amount * (config.deductionPercentage / 100);
@@ -76,10 +66,7 @@ export const processVaultDeductions = onSchedule("every 10 minutes", async (even
 
                         const networkPassphrase = config.networkUrl.includes("testnet") ? Networks.TESTNET : Networks.PUBLIC;
 
-                        const transaction = new TransactionBuilder(account, {
-                            fee: BASE_FEE,
-                            networkPassphrase
-                        })
+                        const transaction = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase })
                             .addOperation(op)
                             .setTimeout(30)
                             .build();
@@ -87,24 +74,38 @@ export const processVaultDeductions = onSchedule("every 10 minutes", async (even
                         transaction.sign(kp);
                         await server.submitTransaction(transaction);
 
-                        // 4. Write to a telemetry logs collection for the frontend
+                        // Write Telemetry
                         await db.collection("telemetryLogs").add({
                             merchantId: doc.id,
                             message: `Vault allocation successful! Auto-deducted ${deductionStr} ${config.targetAsset}`,
                             timestamp: admin.firestore.FieldValue.serverTimestamp(),
                             type: "success"
                         });
+
+                        processedCount++;
                     }
                 }
             }
 
-            // 5. Update the cursor so we don't re-process the exact same payments on the next run
             if (latestCursor !== lastCursor) {
                 await doc.ref.update({ lastProcessedCursor: latestCursor });
             }
 
+            console.log(`Processed ${processedCount} new deductions for merchant: ${doc.id}`);
+
         } catch (error) {
-            console.error(`Error processing merchant ${doc.id}:`, error);
+            console.error(`Error processing merchant ${doc.id}:`, error.message);
         }
     }
-});
+}
+
+// Execute the script
+runEngine()
+    .then(() => {
+        console.log("Engine run complete.");
+        process.exit(0);
+    })
+    .catch((error) => {
+        console.error("Critical Engine Failure:", error);
+        process.exit(1);
+    });

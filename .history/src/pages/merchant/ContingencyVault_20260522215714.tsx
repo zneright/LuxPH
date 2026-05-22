@@ -466,16 +466,7 @@ export default function ContingencyVault() {
                                                         <button
                                                             onClick={() => handleClaimFunds(lock.id)}
                                                             disabled={!lock.isUnlockable}
-                                                            style={{
-                                                                background: lock.isUnlockable ? "linear-gradient(135deg,#7c3aed,#4f46e5)" : "rgba(255,255,255,0.05)",
-                                                                color: lock.isUnlockable ? "#fff" : "#6b7280",
-                                                                border: lock.isUnlockable ? "none" : "1px solid rgba(255,255,255,0.1)",
-                                                                padding: "12px 24px",
-                                                                borderRadius: 8,
-                                                                fontWeight: 800,
-                                                                cursor: lock.isUnlockable ? "pointer" : "not-allowed",
-                                                                transition: "0.2s"
-                                                            }}
+                                                            style={{ background: lock.isUnlockable ? "linear-gradient(135deg,#7c3aed,#4f46e5)" : "rgba(255,255,255,0.05)", color: lock.isUnlockable ? "#fff" : "#6b7280", border: lock.isUnlockable ? "none" : "1px solid rgba(255,255,255,0.1)", padding: "12px 24px", borderRadius: 8, fontWeight: 800, cursor: lock.isUnlockable ? "pointer", transition: "0.2s" }}
                                                         >
                                                             Redeem Yield
                                                         </button>

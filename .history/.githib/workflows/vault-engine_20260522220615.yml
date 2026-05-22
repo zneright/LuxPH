@@ -1,0 +1,30 @@
+name: Vault Automation Engine
+
+on:
+  schedule:
+    # Runs every 10 minutes
+    - cron: '*/10 * * * *'
+  workflow_dispatch: # This allows you to click a button on GitHub to run it manually!
+
+jobs:
+  run-engine:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install Dependencies
+        working-directory: ./github-worker
+        run: npm install
+
+      - name: Run Vault Engine
+        working-directory: ./github-worker
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: node engine.js
