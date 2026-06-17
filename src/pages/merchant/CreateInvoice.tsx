@@ -14,6 +14,7 @@ import {
   BASE_FEE
 } from "@stellar/stellar-sdk";
 import { motion, AnimatePresence } from "framer-motion";
+import CryptoJS from "crypto-js";
 import { LoadingOverlay } from "../../components/ui/LoadingOverlay";
 import MonthlyUsageCard from "../../components/dashboard/MonthlyUsageCard";
 import { jsPDF } from "jspdf";
@@ -21,25 +22,6 @@ import html2canvas from "html2canvas";
 
 const FALLBACK_ISSUER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
 const FALLBACK_USDC = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
-
-const FloatingNode = ({ delay = 0, x, y, size = 1, color = "#f59e0b", blur = 0 }: { delay?: number, x: string, y: string, size?: number, color?: string, blur?: number }) => {
-  const { randomDuration, randomDelay } = useMemo(() => ({
-    randomDuration: 5 + Math.random() * 5,
-    randomDelay: delay + Math.random() * 2
-  }), [delay]);
-
-  return (
-    <motion.div
-      className="absolute rounded-full z-0 pointer-events-none"
-      style={{
-        left: x, top: y, width: 2 * size, height: 2 * size,
-        background: color, filter: `blur(${blur}px)`, boxShadow: `0 0 ${size * 4}px ${size}px ${color}80`
-      }}
-      animate={{ opacity: [0.1, 0.5, 0.1], scale: [1, 1.4, 1], y: ["0%", "-40%", "0%"], x: ["0%", "15%", "0%"] }}
-      transition={{ duration: randomDuration, delay: randomDelay, repeat: Infinity, ease: "easeInOut" }}
-    />
-  );
-};
 
 export default function CreateInvoice() {
   const [sysConfig, setSysConfig] = useState({
@@ -50,7 +32,7 @@ export default function CreateInvoice() {
   });
 
   const [amount, setAmount] = useState("15");
-  const [description, setDescription] = useState("Sari-sari restock order");
+  const [description, setDescription] = useState("");
   const [token, setToken] = useState<"XLM" | "PHPC" | "USDC">("USDC");
   const [customerName, setCustomerName] = useState("");
   const [memo, setMemo] = useState("");
@@ -59,13 +41,14 @@ export default function CreateInvoice() {
   const [monthlyUsage, setMonthlyUsage] = useState(0);
   const [isSubscribed, setIsSubscribed] = useState(false);
 
-  // --- BALANCE STATE ---
   const [balance, setBalance] = useState("0.00");
   const [isBalanceHidden, setIsBalanceHidden] = useState(true);
 
-  // --- VAULT STATE ---
+  // --- AUTOMATED VAULT STATE ---
   const [vaultConfig, setVaultConfig] = useState<any>(null);
   const [vaultSecretKey, setVaultSecretKey] = useState<string | null>(null);
+  const [vaultArmed, setVaultArmed] = useState(false);
+  const [decryptedKey, setDecryptedKey] = useState<string | null>(null);
 
   const [fiatCurrency, setFiatCurrency] = useState<"PHP" | "USD">("PHP");
   const [amountInFiat, setAmountInFiat] = useState("500");
@@ -83,6 +66,13 @@ export default function CreateInvoice() {
   const paymentStartTimeRef = useRef<number | null>(null);
   const streamCloserRef = useRef<(() => void) | null>(null);
   const processedTxsRef = useRef<Set<string>>(new Set());
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (streamCloserRef.current) streamCloserRef.current();
+    };
+  }, []);
 
   useEffect(() => {
     const initSystem = async () => {
@@ -117,9 +107,25 @@ export default function CreateInvoice() {
               setIsSubscribed(data?.isSubscribed === true);
               if (data?.stellarPublicKey) setMerchantAddress(data.stellarPublicKey);
 
+              // 🔥 AUTOMATIC DEVICE ARMING CHECK
               if (data?.vaultConfig?.isEnabled && data?.encryptedSecretKey) {
                 setVaultConfig(data.vaultConfig);
                 setVaultSecretKey(data.encryptedSecretKey);
+
+                const savedPin = localStorage.getItem("luxph_vault_pin");
+                if (savedPin) {
+                  try {
+                    const bytes = CryptoJS.AES.decrypt(data.encryptedSecretKey, savedPin);
+                    const dec = bytes.toString(CryptoJS.enc.Utf8);
+                    if (dec) {
+                      Keypair.fromSecret(dec); // Verify it's a real key
+                      setDecryptedKey(dec);
+                      setVaultArmed(true);
+                    }
+                  } catch (e) {
+                    console.error("Auto-arm failed: Invalid local PIN.");
+                  }
+                }
               }
             }
             setMemo(`INV${Math.floor(100000 + Math.random() * 900000)}`);
@@ -155,7 +161,7 @@ export default function CreateInvoice() {
       }
     };
     fetchBalance();
-  }, [merchantAddress, token, sysConfig.horizonUrl, sysConfig.phpcIssuer, sysConfig.usdcIssuer, paymentStatus]); // Refresh balance when paymentStatus changes
+  }, [merchantAddress, token, sysConfig.horizonUrl, sysConfig.phpcIssuer, sysConfig.usdcIssuer, paymentStatus]);
 
   const fetchUsage = async (uid: string) => {
     try {
@@ -194,23 +200,53 @@ export default function CreateInvoice() {
 
         setRealTimeRate(rate);
 
-        const parsedFiat = parseFloat(amountInFiat);
-        if (!isNaN(parsedFiat)) setAmount((parsedFiat / rate).toFixed(2));
+        // ALWAYS keep inputs dynamically synced when dropdowns change!
+        if (amountInFiat) {
+          const parsedFiat = parseFloat(amountInFiat);
+          if (!isNaN(parsedFiat)) {
+            let newCrypto = (parsedFiat / rate).toFixed(5);
+            newCrypto = parseFloat(newCrypto).toString(); // remove trailing zeroes safely
+            setAmount(newCrypto);
+          }
+        }
       } catch (e) {
         console.error("Rate fetch failed");
       }
     };
     fetchRate();
     return () => { isMounted = false; };
-  }, [amountInFiat, token, fiatCurrency]);
+  }, [token, fiatCurrency]);
 
   const handleCryptoAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newCryptoAmount = e.target.value;
-    setAmount(newCryptoAmount);
+    const val = e.target.value;
+    setAmount(val);
 
-    const parsedCrypto = parseFloat(newCryptoAmount);
-    if (!isNaN(parsedCrypto)) setAmountInFiat((parsedCrypto * realTimeRate).toFixed(2));
-    else setAmountInFiat("");
+    if (val === "") {
+      setAmountInFiat("");
+      return;
+    }
+
+    const parsed = parseFloat(val);
+    if (!isNaN(parsed)) {
+      setAmountInFiat((parsed * realTimeRate).toFixed(2));
+    }
+  };
+
+  const handleFiatAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setAmountInFiat(val);
+
+    if (val === "") {
+      setAmount("");
+      return;
+    }
+
+    const parsed = parseFloat(val);
+    if (!isNaN(parsed)) {
+      let newCrypto = (parsed / realTimeRate).toFixed(5);
+      newCrypto = parseFloat(newCrypto).toString();
+      setAmount(newCrypto);
+    }
   };
 
   const inputVolumePHP = fiatCurrency === "PHP" ? parseFloat(amountInFiat) || 0 : (parseFloat(amountInFiat) || 0) * usdToPhpRate;
@@ -262,8 +298,8 @@ export default function CreateInvoice() {
     } catch (err) { console.error("Firestore Save Error:", err); }
   };
 
-  const processInstantVaultDeduction = async (paidAmount: string) => {
-    if (!vaultConfig || !vaultSecretKey || !vaultConfig.networkUrl) {
+  const processInstantVaultDeduction = async (paidAmount: string, runtimeKey: string) => {
+    if (!vaultConfig || !vaultConfig.networkUrl) {
       console.error("Vault not initialized: Missing Config or URL");
       return;
     }
@@ -272,7 +308,7 @@ export default function CreateInvoice() {
       const deduction = parseFloat(paidAmount) * (vaultConfig.deductionPercentage / 100);
       if (deduction <= 0) return;
 
-      const kp = Keypair.fromSecret(vaultSecretKey);
+      const kp = Keypair.fromSecret(runtimeKey);
       const server = new Horizon.Server(vaultConfig.networkUrl);
       const account = await server.loadAccount(kp.publicKey());
 
@@ -332,6 +368,7 @@ export default function CreateInvoice() {
       alert(`⚠️ This transaction exceeds your free tier limit (${sysConfig.freeTierCap.toLocaleString()} PHP). Please subscribe to continue.`);
       return;
     }
+
     if (streamCloserRef.current) {
       streamCloserRef.current();
       streamCloserRef.current = null;
@@ -341,7 +378,7 @@ export default function CreateInvoice() {
     const now = Date.now();
     paymentStartTimeRef.current = now;
 
-    startListeningForPayment(memo, now, amount, token, fiatCurrency, amountInFiat, description, customerName);
+    startListeningForPayment(memo, now, amount, token, fiatCurrency, amountInFiat, description, customerName, decryptedKey);
   };
 
   const cancelListening = async () => {
@@ -364,7 +401,8 @@ export default function CreateInvoice() {
     activeFiatCurrency: string,
     activeFiatAmount: string,
     activeDescription: string,
-    activeCustomerName: string
+    activeCustomerName: string,
+    activeRuntimeKey: string | null
   ) => {
     if (!merchantAddress) return;
 
@@ -372,89 +410,95 @@ export default function CreateInvoice() {
       streamCloserRef.current();
       streamCloserRef.current = null;
     }
+
     processedTxsRef.current.clear();
     setPaymentStatus("listening");
 
     const server = new Horizon.Server(sysConfig.horizonUrl);
-    const closeStream = server.transactions()
-      .forAccount(merchantAddress)
-      .cursor("now")
-      .stream({
-        onmessage: async (transaction: any) => {
-          if (!transaction.hash || processedTxsRef.current.has(transaction.hash)) return;
-          processedTxsRef.current.add(transaction.hash);
+    let isChecking = false;
+
+    const checkTransactions = async () => {
+      if (isChecking) return;
+      isChecking = true;
+
+      try {
+        const response = await server.transactions()
+          .forAccount(merchantAddress)
+          .order("desc")
+          .limit(10)
+          .call();
+
+        for (const transaction of response.records) {
+          if (processedTxsRef.current.has(transaction.hash)) continue;
 
           const incomingMemo = transaction.memo ? transaction.memo.toString().trim() : (transaction.memo_text ? transaction.memo_text.trim() : "");
-          if (incomingMemo !== activeMemo.trim()) return;
 
-          setReceiptHash(transaction.hash);
-          setReceiptDate(new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }));
-          setIsLoading(true);
+          if (incomingMemo === activeMemo.trim()) {
+            processedTxsRef.current.add(transaction.hash);
 
-          if (vaultConfig && vaultSecretKey) {
-            setLoadingMsg(`Routing ${vaultConfig.deductionPercentage}% to Contingency Vault...`);
-            await processInstantVaultDeduction(activeAmount);
-          } else {
-            setLoadingMsg("Confirming payment & generating receipt...");
+            if (streamCloserRef.current) {
+              streamCloserRef.current();
+              streamCloserRef.current = null;
+            }
+
+            setReceiptHash(transaction.hash);
+            setReceiptDate(new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }));
+            setIsLoading(true);
+
+            if (vaultConfig && activeRuntimeKey) {
+              setLoadingMsg(`Routing ${vaultConfig.deductionPercentage}% to Contingency Vault...`);
+              await processInstantVaultDeduction(activeAmount, activeRuntimeKey);
+            } else {
+              setLoadingMsg("Confirming payment & generating receipt...");
+            }
+
+            const receiveTime = Date.now();
+            let totalSpeed = "0.00";
+            let netSpeed = "0.00";
+
+            if (activeStartTime) totalSpeed = ((receiveTime - activeStartTime) / 1000).toFixed(2);
+
+            if (transaction.created_at) {
+              const ledgerTime = new Date(transaction.created_at).getTime();
+              const speedSeconds = Math.max(0.1, Math.abs(receiveTime - ledgerTime) / 1000);
+              netSpeed = speedSeconds.toFixed(2);
+            } else {
+              netSpeed = totalSpeed;
+            }
+
+            setSpeeds({ network: netSpeed, total: totalSpeed });
+
+            await saveInvoiceToFirestore(
+              "success", transaction.hash, netSpeed, totalSpeed,
+              activeMemo, activeAmount, activeToken, activeFiatCurrency, activeFiatAmount, activeDescription, activeCustomerName
+            );
+
+            setIsLoading(false);
+            setPaymentStatus("success");
+            break;
           }
-
-          const receiveTime = Date.now();
-          let totalSpeed = "0.00";
-          let netSpeed = "0.00";
-
-          if (activeStartTime) totalSpeed = ((receiveTime - activeStartTime) / 1000).toFixed(2);
-
-          if (transaction.created_at) {
-            const ledgerTime = new Date(transaction.created_at).getTime();
-            const speedSeconds = Math.max(0.1, Math.abs(receiveTime - ledgerTime) / 1000);
-            netSpeed = speedSeconds.toFixed(2);
-          } else {
-            netSpeed = totalSpeed;
-          }
-
-          if (streamCloserRef.current) {
-            streamCloserRef.current();
-            streamCloserRef.current = null;
-          }
-
-          setSpeeds({ network: netSpeed, total: totalSpeed });
-
-          await saveInvoiceToFirestore(
-            "success", transaction.hash, netSpeed, totalSpeed,
-            activeMemo, activeAmount, activeToken, activeFiatCurrency, activeFiatAmount, activeDescription, activeCustomerName
-          );
-
-          setIsLoading(false);
-          setPaymentStatus("success");
-        },
-        onerror: async (error) => {
-          console.error("Stream Error:", error);
-          if (streamCloserRef.current) {
-            streamCloserRef.current();
-            streamCloserRef.current = null;
-          }
-          processedTxsRef.current.clear();
-          let totalSpeed = "0.00";
-          if (activeStartTime) totalSpeed = ((Date.now() - activeStartTime) / 1000).toFixed(2);
-
-          await saveInvoiceToFirestore(
-            "failed", "", "0.00", totalSpeed,
-            activeMemo, activeAmount, activeToken, activeFiatCurrency, activeFiatAmount, activeDescription, activeCustomerName
-          );
-
-          setIsLoading(false);
-          setPaymentStatus("idle");
-          alert("Payment listener encountered a connection issue. Please try generating the invoice again.");
         }
-      });
+      } catch (error) {
+        console.warn("Polling interval skipped due to network blip");
+      } finally {
+        isChecking = false;
+      }
+    };
 
-    streamCloserRef.current = closeStream;
+    const intervalId = setInterval(checkTransactions, 3000);
+    checkTransactions();
+
+    streamCloserRef.current = () => {
+      clearInterval(intervalId);
+    };
   };
 
   const generateNewInvoiceId = () => {
     setMemo(`INV${Math.floor(100000 + Math.random() * 900000)}`);
     setPaymentStatus("idle");
     setReceiptHash("");
+    setAmount("0.00");
+    setAmountInFiat("0.00");
     paymentStartTimeRef.current = null;
     setSpeeds({ network: "0.00", total: "0.00" });
   };
@@ -494,53 +538,106 @@ export default function CreateInvoice() {
   return (
     <div style={{ position: "relative", minHeight: "100vh", zIndex: 1, paddingBottom: 60, boxSizing: "border-box" }}>
       <style>{`
-        .inv-layout-split { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; align-items: start; }
-        .inv-dual-fields { display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px; align-items: end; margin-bottom: 20px; }
-        .inv-card-left { backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,.06); border-radius: 24px; padding: 32px; position: relative; overflow: hidden; }
-        .inv-card-right { backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,.06); border-radius: 24px; display: flex; flexDirection: column; align-items: center; justify-content: center; padding: 40px; position: relative; overflow: hidden; min-height: 450px; box-sizing: border-box; }
-        .qr-frame-box { position: relative; width: 100%; max-width: 260px; aspect-ratio: 1/1; margin-bottom: 24px; display: flex; items-center: center; justify-content: center; background: #ffffff; border-radius: 32px; padding: 20px; box-sizing: border-box; }
-        .receipt-action-buttons { display: flex; gap: 12px; width: 100%; margin-top: 16px; }
+        /* ULTRA-CLEAN TOKEN-FIRST PREMIUM UI */
+        .header-title { font-size: 32px; font-weight: 800; font-family: 'Nunito',sans-serif; color: #fff; margin: 0; letter-spacing: -0.02em; }
+        
+        .inv-layout-centered { display: flex; flex-direction: column; align-items: center; justify-content: center; max-width: 520px; margin: 0 auto; width: 100%; }
 
-        @media (max-width: 992px) {
-          .inv-layout-split { grid-template-columns: 1fr; gap: 24px; }
+        /* The Premium Input Card with dynamic PRO styling */
+        .premium-input-card { position: relative; border-radius: 36px; padding: 40px 30px; width: 100%; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; overflow: hidden; z-index: 1; transition: all 0.5s ease; }
+        .premium-input-card.standard { background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06); }
+        .premium-input-card.pro-active { background: linear-gradient(145deg, rgba(20,20,30,0.85) 0%, rgba(10,10,15,0.95) 100%); border: 1px solid rgba(245,158,11,0.3); box-shadow: 0 20px 50px -10px rgba(245,158,11,0.15), inset 0 0 20px rgba(245,158,11,0.05); }
+        
+        .pro-badge { background: linear-gradient(90deg, #fcd34d, #f59e0b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 900; font-size: 13px; letter-spacing: 2px; text-transform: uppercase; position: absolute; top: 26px; right: 26px; font-family: 'DM Mono',monospace; opacity: 0.9; }
+
+        /* SLEEK BALANCE PILL WIDGET */
+        .balance-pill { display: flex; align-items: center; gap: 12px; padding: 12px 20px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06); border-radius: 30px; cursor: pointer; transition: all 0.3s ease; backdrop-filter: blur(10px); }
+        .balance-pill:hover { background: rgba(255,255,255,0.05); transform: translateY(-2px); }
+        .balance-pill.pro-active { background: rgba(245,158,11,0.05); border-color: rgba(245,158,11,0.2); }
+        .balance-pill.pro-active:hover { background: rgba(245,158,11,0.1); border-color: rgba(245,158,11,0.4); box-shadow: 0 4px 15px rgba(245,158,11,0.1); }
+        
+        .balance-label { color: #9ca3af; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+        .balance-amount { color: #fff; font-size: 16px; font-weight: 800; font-family: 'DM Mono',monospace; min-width: 60px; text-align: right; }
+        .balance-amount.pro-text { color: #fcd34d; }
+
+        /* TOKEN SELECTOR (The absolute center of attention) */
+        .primary-token-badge { background: rgba(255,255,255,0.05); padding: 10px 24px; border-radius: 30px; display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 24px; backdrop-filter: blur(10px); transition: all 0.2s; border: 1px solid rgba(255,255,255,0.05); }
+        .primary-token-badge:hover { background: rgba(255,255,255,0.1); }
+        .primary-token-select { background: transparent; color: #fff; border: none; font-size: 18px; font-weight: 900; outline: none; cursor: pointer; appearance: none; font-family: 'Nunito',sans-serif; letter-spacing: 0.5px; }
+        
+        /* Naked Huge Input - NOW FOR CRYPTO */
+        .massive-naked-input { background: transparent; border: none; color: #fff; font-size: 80px; font-weight: 800; text-align: center; outline: none; font-family: 'Nunito',sans-serif; width: 100%; margin-bottom: 12px; letter-spacing: -3px; line-height: 1; transition: color 0.3s; }
+        .massive-naked-input.pro-text { color: #fcd34d; text-shadow: 0 0 30px rgba(245,158,11,0.4); }
+        .massive-naked-input::-webkit-outer-spin-button, .massive-naked-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        .massive-naked-input[type=number] { -moz-appearance: textfield; }
+        .massive-naked-input::placeholder { color: rgba(255,255,255,0.1); }
+
+        /* Secondary Fiat Preview underneath */
+        .fiat-preview-row { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 0 auto 36px auto; color: #9ca3af; font-size: 18px; font-weight: 600; }
+        .naked-fiat-input { background: transparent; border: none; color: #9ca3af; font-size: 18px; font-weight: 600; text-align: left; outline: none; font-family: 'Nunito',sans-serif; max-width: 120px; transition: color 0.3s; }
+        .naked-fiat-input:focus { color: #fff; }
+        .naked-fiat-select { background: transparent; color: #9ca3af; border: none; font-size: 18px; font-weight: 700; outline: none; cursor: pointer; appearance: none; font-family: 'Nunito',sans-serif; }
+
+        /* Simple Text Input */
+        .simple-text-input { width: 100%; background: transparent; border: none; border-bottom: 2px solid rgba(255,255,255,0.1); padding: 16px 8px; color: #fff; font-size: 16px; outline: none; box-sizing: border-box; transition: all 0.3s; text-align: center; margin-bottom: 30px; font-family: 'Nunito',sans-serif; }
+        .simple-text-input:focus { border-bottom-color: #3b82f6; }
+        .simple-text-input::placeholder { color: rgba(255,255,255,0.3); }
+
+        /* Big Premium Button */
+        .premium-btn { width: 100%; background: #fff; color: #000; border: none; border-radius: 24px; padding: 22px 16px; font-weight: 800; font-size: 18px; cursor: pointer; font-family: 'Nunito',sans-serif; transition: transform 0.1s, opacity 0.2s; box-shadow: 0 10px 30px -10px rgba(255,255,255,0.3); position: relative; overflow: hidden; }
+        .premium-btn:active { transform: scale(0.97); }
+        .premium-btn:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
+
+        /* Terminal Display Cards */
+        .terminal-card { background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06); border-radius: 36px; display: flex; flex-direction: column; align-items: center; padding: 40px 30px; width: 100%; box-sizing: border-box; position: relative; z-index: 1; }
+
+        .qr-clean-frame { background: #fff; padding: 24px; border-radius: 36px; display: flex; align-items: center; justify-content: center; box-shadow: 0 20px 40px rgba(0,0,0,0.2); margin-bottom: 32px; width: 100%; max-width: 280px; aspect-ratio: 1/1; }
+
+        /* Clean Receipt */
+        .clean-receipt { background: #fff; border-radius: 24px; padding: 40px 32px; width: 100%; position: relative; box-shadow: 0 20px 50px rgba(0,0,0,0.15); }
+        .receipt-action-buttons { display: flex; gap: 12px; width: 100%; margin-top: 20px; }
+
+        @keyframes pulseDot {
+          0% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.4; transform: scale(0.8); }
+          100% { opacity: 1; transform: scale(1); }
         }
+        .status-badge { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-family: 'DM Mono',monospace; color: #9ca3af; letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 30px; font-weight: 600; padding: 8px 20px; border-radius: 30px; background: rgba(255,255,255,0.05); }
+
         @media (max-width: 576px) {
-          .inv-dual-fields { grid-template-columns: 1fr; gap: 12px; align-items: stretch; }
-          .inv-dual-fields > div:nth-child(2) { display: none !important; }
-          .inv-card-left, .inv-card-right { padding: 20px; min-height: auto; }
-          .qr-frame-box { max-width: 220px; padding: 12px; }
+          .massive-naked-input { font-size: 64px; }
+          .premium-input-card, .terminal-card { padding: 32px 20px; border-radius: 32px; }
+          .qr-clean-frame { padding: 20px; max-width: 240px; border-radius: 32px; }
           .receipt-action-buttons { flex-direction: column; }
+          .premium-btn { padding: 20px; font-size: 16px; border-radius: 20px; }
+          .clean-receipt { padding: 24px 20px; border-radius: 20px; }
         }
       `}</style>
-
-      {isSubscribed && (
-        <motion.div
-          style={{ position: "absolute", top: "5%", left: "20%", width: 800, height: 800, background: "radial-gradient(circle, rgba(245,158,11,0.06) 0%, transparent 60%)", borderRadius: "50%", zIndex: -1, pointerEvents: "none" }}
-          animate={{ scale: [1, 1.2, 1], opacity: [0.4, 0.7, 0.4] }}
-          transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
-        />
-      )}
 
       <AnimatePresence>
         {isLoading && <LoadingOverlay isLoading={isLoading} message={loadingMsg} />}
       </AnimatePresence>
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 16, marginBottom: 24 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 16, marginBottom: 32 }}>
         <div>
-          <h1 style={{ fontSize: 36, fontWeight: 900, fontFamily: "'Nunito',sans-serif", color: "#fff", margin: 0, letterSpacing: "-0.02em" }}>
-            Receive Payment
-          </h1>
-          <p style={{ color: "#9ca3af", fontSize: 14, marginTop: 6 }}>Generate a payment QR code for your customers.</p>
+          <h1 className="header-title">Request</h1>
+          <p style={{ color: "#9ca3af", fontSize: 15, marginTop: 4, margin: 0, fontWeight: 500 }}>Create a digital payment request.</p>
         </div>
 
-        {/* TOGGLEABLE BALANCE UI */}
-        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, cursor: "pointer", transition: "all 0.2s" }} onClick={() => setIsBalanceHidden(!isBalanceHidden)}>
-          <span style={{ color: "#9ca3af", fontSize: 12, textTransform: "uppercase", letterSpacing: "0.05em", fontFamily: "'DM Mono',monospace" }}>{token} Balance:</span>
-          <span style={{ color: "#fff", fontSize: 16, fontWeight: 700, fontFamily: "'DM Mono',monospace", display: "flex", alignItems: "center", gap: 8 }}>
-            {isBalanceHidden ? "••••••••" : `${balance}`}
-            <span style={{ fontSize: 14, opacity: 0.7 }}>{isBalanceHidden ? "" : ""}</span>
+        {/* --- NEW SLEEK BALANCE PILL WIDGET --- */}
+        <motion.div
+          className={`balance-pill ${isSubscribed ? "pro-active" : ""}`}
+          onClick={() => setIsBalanceHidden(!isBalanceHidden)}
+          whileTap={{ scale: 0.95 }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ width: 6, height: 6, borderRadius: "50%", background: isSubscribed ? "#fcd34d" : "#3b82f6" }} />
+            <span className="balance-label">{token} Balance</span>
+          </div>
+          <span className={`balance-amount ${isSubscribed ? "pro-text" : ""}`}>
+            {isBalanceHidden ? "••••••••" : balance}
           </span>
-        </div>
+        </motion.div>
       </div>
 
       <MonthlyUsageCard
@@ -550,266 +647,208 @@ export default function CreateInvoice() {
         projectedUsage={projectedUsage}
       />
 
-      <div className="inv-layout-split">
-        <motion.div
-          animate={isSubscribed ? {
-            boxShadow: ["0px 0px 0px rgba(245,158,11,0)", "0px 10px 40px rgba(245,158,11,0.12)", "0px 0px 0px rgba(245,158,11,0)"],
-            borderColor: ["rgba(255,255,255,0.06)", "rgba(245,158,11,0.3)", "rgba(255,255,255,0.06)"]
-          } : {}}
-          transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-          className="inv-card-left"
-          style={{ background: isSubscribed ? "rgba(15, 17, 26, 0.6)" : "rgba(255,255,255,.04)" }}
-        >
-          <div className="inv-dual-fields">
-            <div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 700 }}>Base</div>
-                <select value={fiatCurrency} onChange={(e) => setFiatCurrency(e.target.value as "PHP" | "USD")} disabled={paymentStatus !== "idle"} style={{ background: "transparent", color: "#a78bfa", border: "none", fontSize: 12, outline: "none", cursor: "pointer", fontWeight: "bold" }}>
-                  <option value="PHP" style={{ color: "#000" }}>PHP (₱)</option>
-                  <option value="USD" style={{ color: "#000" }}>USD ($)</option>
-                </select>
-              </div>
-              <input type="number" value={amountInFiat} onChange={e => setAmountInFiat(e.target.value)} disabled={paymentStatus !== "idle"} placeholder="0.00" style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: "#fff", fontSize: 16, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} />
+      <div className="inv-layout-centered">
+
+        {/* ----------------------------------------------------------- */}
+        {/* IDLE STATE: THE MASSIVE TOKEN-FIRST INPUT                   */}
+        {/* ----------------------------------------------------------- */}
+        {paymentStatus === "idle" && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className={`premium-input-card ${isSubscribed ? "pro-active" : "standard"}`}
+          >
+            {/* ✨ STUNNING PRO ANIMATION (GLASS AURA) ✨ */}
+            {isSubscribed && (
+              <>
+                <motion.div
+                  style={{ position: "absolute", inset: "-50%", zIndex: -2, background: "conic-gradient(from 0deg, transparent 0%, rgba(245, 158, 11, 0.15) 25%, transparent 50%, rgba(124, 58, 237, 0.15) 75%, transparent 100%)", filter: "blur(40px)" }}
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 15, repeat: Infinity, ease: "linear" }}
+                />
+                <div className="pro-badge">PRO</div>
+              </>
+            )}
+
+            {/* TOKEN SELECTOR (Now the primary focus at the top) */}
+            <div className="primary-token-badge">
+              <select value={token} onChange={(e) => setToken(e.target.value as "XLM" | "PHPC" | "USDC")} className="primary-token-select" style={{ color: isSubscribed ? "#fcd34d" : "#fff" }}>
+                <option value="USDC" style={{ color: "#000" }}>USDC</option>
+                <option value="PHPC" style={{ color: "#000" }}>PHPC</option>
+                <option value="XLM" style={{ color: "#000" }}>XLM</option>
+              </select>
+              <span style={{ fontSize: 12, color: isSubscribed ? "#fcd34d" : "#9ca3af" }}>▼</span>
             </div>
 
-            <motion.div animate={{ opacity: [0.4, 1, 0.4] }} transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }} style={{ paddingBottom: 14, color: isSubscribed ? "#f59e0b" : "#6b7280", fontSize: 20, textAlign: "center" }}>
-              ⇄
-            </motion.div>
+            {/* Massive Number Input - PERFECTLY SYNCHED */}
+            <input
+              type="number"
+              value={amount}
+              onChange={handleCryptoAmountChange}
+              placeholder="0"
+              className={`massive-naked-input ${isSubscribed ? "pro-text" : ""}`}
+              autoFocus
+            />
 
-            <div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 700 }}>Crypto</div>
-                <select value={token} onChange={(e) => setToken(e.target.value as "XLM" | "PHPC" | "USDC")} disabled={paymentStatus !== "idle"} style={{ background: "transparent", color: "#a78bfa", border: "none", fontSize: 12, outline: "none", cursor: "pointer", fontWeight: "bold" }}>
-                  <option value="USDC" style={{ color: "#000" }}>USDC</option>
-                  <option value="PHPC" style={{ color: "#000" }}>PHPC</option>
-                  <option value="XLM" style={{ color: "#000" }}>XLM</option>
-                </select>
-              </div>
-              <input type="number" value={amount} onChange={handleCryptoAmountChange} disabled={paymentStatus !== "idle"} placeholder="0.00" style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: isSubscribed ? "#fcd34d" : "#a78bfa", fontSize: 16, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} />
+            {/* Fiat Conversion Preview underneath - PERFECTLY SYNCHED */}
+            <div className="fiat-preview-row">
+              <span>≈</span>
+              <input
+                type="number"
+                value={amountInFiat}
+                onChange={handleFiatAmountChange}
+                placeholder="0.00"
+                className="naked-fiat-input"
+              />
+              <select value={fiatCurrency} onChange={(e) => setFiatCurrency(e.target.value as "PHP" | "USD")} className="naked-fiat-select">
+                <option value="PHP" style={{ color: "#000" }}>PHP</option>
+                <option value="USD" style={{ color: "#000" }}>USD</option>
+              </select>
             </div>
-          </div>
 
-          <div style={{ marginBottom: 24 }}>
-            <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8, fontWeight: 700 }}>Description</div>
             <input
               value={description}
               onChange={e => setDescription(e.target.value)}
-              disabled={paymentStatus !== "idle"}
-              style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: "#fff", fontSize: 14, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }}
+              placeholder="Add a note (optional)"
+              className="simple-text-input"
             />
-          </div>
 
-          {paymentStatus === "idle" ? (
-            <motion.button
+            {vaultConfig?.isEnabled && (
+              <div style={{ width: "100%", marginBottom: 24, padding: "14px", background: "rgba(255,255,255,0.02)", borderRadius: 16, textAlign: "center", fontSize: 13, color: "#9ca3af" }}>
+                Vault Active: {vaultConfig.deductionPercentage}% will be secured.
+              </div>
+            )}
+
+            <button
               type="button"
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
               onClick={handleStartListening}
-              disabled={willExceedLimit}
+              disabled={willExceedLimit || parseFloat(amount || "0") <= 0}
+              className="premium-btn"
               style={{
-                width: "100%",
-                background: willExceedLimit ? "rgba(239, 68, 68, 0.15)" : (isSubscribed ? "linear-gradient(90deg, #f59e0b, #d97706)" : "linear-gradient(135deg,#7c3aed,#4f46e5)"),
-                color: willExceedLimit ? "#ef4444" : "#fff",
-                border: willExceedLimit ? "1px solid rgba(239, 68, 68, 0.4)" : "none",
-                borderRadius: 14,
-                padding: "18px 16px",
-                fontWeight: 800,
-                fontSize: 16,
-                cursor: willExceedLimit ? "not-allowed" : "pointer",
-                fontFamily: "'Nunito',sans-serif",
-                position: "relative",
-                overflow: "hidden",
-                boxShadow: isSubscribed && !willExceedLimit ? "0 8px 25px -6px rgba(245,158,11,0.5)" : "0 8px 25px -6px rgba(124,58,237,0.4)"
+                background: isSubscribed ? "linear-gradient(135deg, #f59e0b, #d97706)" : "#fff",
+                color: isSubscribed ? "#fff" : "#000",
               }}
             >
-              {isSubscribed && !willExceedLimit && (
-                <motion.div animate={{ left: ["-100%", "200%"] }} transition={{ repeat: Infinity, duration: 2.5, ease: "easeInOut", repeatDelay: 3 }} style={{ position: "absolute", top: 0, bottom: 0, width: "25%", background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent)", transform: "skewX(-20deg)" }} />
-              )}
-              {willExceedLimit ? "Limit Exceeded" : "Generate QR Code"}
-            </motion.button>
-          ) : (
-            <button type="button" onClick={cancelListening} style={{ width: "100%", background: "transparent", color: "#ef4444", border: "1px solid rgba(239,68,68,.3)", borderRadius: 12, padding: 14, fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "'Nunito',sans-serif", transition: "background 0.2s" }}>
-              Cancel & Edit Invoice
+              {willExceedLimit ? "Limit Exceeded" : "Generate Request"}
             </button>
-          )}
-        </motion.div>
+          </motion.div>
+        )}
 
-        <motion.div
-          animate={isSubscribed ? {
-            boxShadow: ["0px 0px 0px rgba(245,158,11,0)", "0px 10px 40px rgba(245,158,11,0.12)", "0px 0px 0px rgba(245,158,11,0)"],
-            borderColor: ["rgba(255,255,255,0.06)", "rgba(245,158,11,0.2)", "rgba(255,255,255,0.06)"]
-          } : {}}
-          transition={{ duration: 5, delay: 2.5, repeat: Infinity, ease: "easeInOut" }}
-          className="inv-card-right"
-          style={{ background: isSubscribed ? "rgba(15, 17, 26, 0.6)" : "rgba(255,255,255,.04)", padding: paymentStatus === "success" ? "24px" : "40px" }}
-        >
-          {isSubscribed && paymentStatus !== "success" && (
-            <>
-              <FloatingNode delay={0} x="15%" y="20%" size={6} color="#f59e0b" blur={2} />
-              <FloatingNode delay={0.7} x="85%" y="30%" size={12} color="#10b981" blur={4} />
-              <FloatingNode delay={1.5} x="25%" y="75%" size={5} color="#a78bfa" blur={1} />
-              <FloatingNode delay={1.0} x="75%" y="70%" size={8} color="#f59e0b" blur={3} />
-            </>
-          )}
-
-          {paymentStatus === "idle" && (
-            <motion.div animate={isSubscribed ? { y: [-8, 8, -8] } : {}} transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }} style={{ textAlign: "center", color: "#9ca3af", fontSize: 15, zIndex: 10, maxWidth: 280, lineHeight: 1.6 }}>
-              <div style={{ fontSize: 56, marginBottom: 20, filter: isSubscribed ? "drop-shadow(0 0 20px rgba(245,158,11,0.4))" : "none" }}>💸</div>
-              Enter details on the left, then generate a payment QR code.
-            </motion.div>
-          )}
-
-          {paymentStatus === "listening" && (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", zIndex: 10, width: "100%" }}>
-              <div style={{ fontSize: 12, fontFamily: "'DM Mono',monospace", color: isSubscribed ? "#fcd34d" : "#a78bfa", letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 24, fontWeight: 700 }}>
-                Awaiting Payment...
-              </div>
-
+        {/* ----------------------------------------------------------- */}
+        {/* LISTENING STATE: TERMINAL SCREEN                            */}
+        {/* ----------------------------------------------------------- */}
+        {paymentStatus === "listening" && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className={`terminal-card ${isSubscribed ? "pro-active" : "standard"}`}
+          >
+            {/* ✨ STUNNING PRO ANIMATION (GLASS AURA) ✨ */}
+            {isSubscribed && (
               <motion.div
-                initial={{ scale: 0.9, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1, boxShadow: isSubscribed ? "0 0 40px rgba(245,158,11,0.6)" : "0 0 40px rgba(124,58,237,0.6)" }}
-                transition={{ duration: 0.5, ease: "easeOut" }}
-                className="qr-frame-box"
-                style={{ border: isSubscribed ? "4px solid rgba(245,158,11,0.8)" : "4px solid rgba(124,58,237,0.8)" }}
-              >
-                <QRCodeSVG value={generateStellarURI()} size={220} level="H" fgColor="#000000" style={{ width: "100%", height: "100%" }} />
-              </motion.div>
+                style={{ position: "absolute", inset: "-50%", zIndex: -2, background: "conic-gradient(from 0deg, transparent 0%, rgba(245, 158, 11, 0.1) 25%, transparent 50%, rgba(16, 185, 129, 0.1) 75%, transparent 100%)", filter: "blur(50px)" }}
+                animate={{ rotate: 360 }}
+                transition={{ duration: 15, repeat: Infinity, ease: "linear" }}
+              />
+            )}
 
-              <div style={{ fontSize: 36, fontWeight: 900, fontFamily: "'Nunito',sans-serif", color: "#fff", marginBottom: 8, filter: isSubscribed ? "drop-shadow(0 0 10px rgba(245,158,11,0.3))" : "none", textAlign: "center" }}>
+            <div className="status-badge">
+              <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#3b82f6", animation: "pulseDot 1.5s infinite" }} />
+              Awaiting Scan
+            </div>
+
+            <div style={{ textAlign: "center", marginBottom: 32 }}>
+              <div style={{ fontSize: 16, color: "#9ca3af", marginBottom: 8, fontWeight: 600 }}>{description || "Payment Request"}</div>
+              <div style={{ fontSize: 52, fontWeight: 900, fontFamily: "'Nunito',sans-serif", color: isSubscribed ? "#fcd34d" : "#fff", lineHeight: 1, letterSpacing: "-1px" }}>
                 {parseFloat(amount || "0").toLocaleString()} {token}
               </div>
-              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 12, color: "#9ca3af", background: "rgba(0,0,0,0.4)", border: "1px solid rgba(255,255,255,0.05)", padding: "8px 16px", borderRadius: 8, backdropFilter: "blur(12px)", textAlign: "center" }}>
-                ID: <span style={{ color: "#fff" }}>{memo}</span>
-              </div>
             </div>
-          )}
 
-          {paymentStatus === "success" && (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.4, type: "spring", bounce: 0.4 }}
-              style={{ display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}
+            <div className="qr-clean-frame" style={{ boxShadow: isSubscribed ? "0 20px 50px rgba(245,158,11,0.2)" : "0 20px 40px rgba(0,0,0,0.2)" }}>
+              <QRCodeSVG value={generateStellarURI()} size={240} level="H" fgColor="#000000" style={{ width: "100%", height: "100%" }} />
+            </div>
+
+            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 13, color: "#6b7280", letterSpacing: "1px", marginBottom: 32 }}>
+              ID: {memo}
+            </div>
+
+            <button
+              type="button"
+              onClick={cancelListening}
+              style={{ background: "transparent", color: "#9ca3af", border: "none", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "'Nunito',sans-serif" }}
             >
-              <div style={{ width: "100%", maxWidth: 480 }}>
-                {/* IDENTICAL RECEIPT PDF CONTAINER */}
-                <div id="printable-receipt" style={{ background: "#ffffff", borderRadius: 16, padding: "40px 32px", position: "relative", overflow: "hidden" }}>
+              Cancel Request
+            </button>
+          </motion.div>
+        )}
 
-                  <div style={{ textAlign: "center", marginBottom: "32px", marginTop: "8px", padding: "10px" }}>
-                    <img
-                      src="/images/luxphlogo.svg"
-                      alt="Lux PH Icon"
-                      style={{
-                        height: "36px",
-                        width: "auto",
-                        display: "inline-block",
-                        verticalAlign: "middle",
-                        marginRight: "12px",
-                        position: "relative",
-                        top: "8px"
-                      }}
-                      crossOrigin="anonymous"
-                    />
-                    <span style={{
-                      fontSize: "32px",
-                      fontWeight: 900,
-                      color: "#0f172a",
-                      fontFamily: "'Nunito',sans-serif",
-                      letterSpacing: "1px",
-                      display: "inline-block",
-                      verticalAlign: "middle"
-                    }}>
-                      LUX PH
-                    </span>
-                  </div>
+        {/* ----------------------------------------------------------- */}
+        {/* SUCCESS STATE: HIGH-END RECEIPT                             */}
+        {/* ----------------------------------------------------------- */}
+        {paymentStatus === "success" && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            style={{ width: "100%", display: "flex", flexDirection: "column", alignItems: "center" }}
+          >
+            <div id="printable-receipt" className="clean-receipt">
 
-                  <div style={{ textAlign: "center", marginBottom: 36 }}>
-                    <div style={{ width: 72, height: 72, background: "#10b981", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", color: "#fff" }}>
-                      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="20 6 9 17 4 12"></polyline>
-                      </svg>
-                    </div>
-
-                    <h2 style={{ margin: 0, color: "#0f172a", fontFamily: "'Nunito',sans-serif", fontSize: 26, fontWeight: 900 }}>Payment Received</h2>
-                    <p style={{ margin: "6px 0 0 0", color: "#64748b", fontSize: 14 }}>Transaction successfully settled on-chain.</p>
-                  </div>
-
-                  <div style={{ borderTop: "2px dashed #e5e7eb", borderBottom: "2px dashed #e5e7eb", padding: "24px 0", marginBottom: 24, display: "flex", flexDirection: "column", gap: 16 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span style={{ color: "#6b7280", fontSize: 13 }}>Invoice ID</span>
-                      <span style={{ color: "#111827", fontSize: 13, fontWeight: 700, fontFamily: "'DM Mono',monospace" }}>{memo}</span>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span style={{ color: "#6b7280", fontSize: 13 }}>Date & Time</span>
-                      <span style={{ color: "#111827", fontSize: 13, fontWeight: 600 }}>{receiptDate}</span>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span style={{ color: "#6b7280", fontSize: 13 }}>Description</span>
-                      <span style={{ color: "#111827", fontSize: 13, fontWeight: 600 }}>{description || "Payment"}</span>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span style={{ color: "#6b7280", fontSize: 13 }}>Amount Received</span>
-                      <span style={{ color: "#10b981", fontSize: 13, fontWeight: 700 }}>+ {parseFloat(amount).toLocaleString()} {token}</span>
-                    </div>
-                  </div>
-
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-                    <span style={{ color: "#374151", fontSize: 16, fontWeight: 700 }}>{fiatCurrency} Value</span>
-                    <span style={{ color: "#10b981", fontSize: 28, fontWeight: 800, fontFamily: "'Nunito',sans-serif" }}>
-                      {fiatCurrency === "PHP" ? "₱" : "$"}{parseFloat(amountInFiat).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                    </span>
-                  </div>
-
-                  <div style={{ textAlign: "center", fontSize: 11, color: "#9ca3af", fontFamily: "'DM Mono',monospace", wordBreak: "break-all", background: "#f3f4f6", padding: 12, borderRadius: 8 }}>
-                    <div style={{ color: "#6b7280", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em", fontSize: 10 }}>Stellar Transaction Hash</div>
-                    {receiptHash}
-                  </div>
-
-                  <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 24, flexWrap: "wrap" }}>
-                    <div style={{ background: "rgba(16,185,129,0.1)", color: "#10b981", border: "1px solid rgba(16,185,129,0.2)", borderRadius: 20, padding: "6px 14px", fontSize: 12, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>
-                      ⚡ Network: {speeds.network}s
-                    </div>
-                    <div style={{ background: "rgba(10, 37, 64, 0.1)", color: "#0a2540", border: "1px solid rgba(10, 37, 64, 0.2)", borderRadius: 20, padding: "6px 14px", fontSize: 12, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>
-                      ⏱️ Total: {speeds.total}s
-                    </div>
-                    <div style={{ background: isTestnet ? "rgba(239,68,68,0.1)" : "rgba(59,130,246,0.1)", color: isTestnet ? "#ef4444" : "#3b82f6", border: isTestnet ? "1px solid rgba(239,68,68,0.2)" : "1px solid rgba(59,130,246,0.2)", borderRadius: 20, padding: "6px 14px", fontSize: 12, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>
-                      🌐 {networkName}
-                    </div>
-                  </div>
+              <div style={{ textAlign: "center", marginBottom: 40 }}>
+                <div style={{ width: 64, height: 64, background: "#000", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px", color: "#fff" }}>
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
                 </div>
+                <h2 style={{ margin: 0, color: "#000", fontFamily: "'Nunito',sans-serif", fontSize: 24, fontWeight: 900 }}>Payment Complete</h2>
+                <p style={{ margin: "4px 0 0 0", color: "#6b7280", fontSize: 14 }}>Settled instantly via Stellar</p>
+              </div>
 
-                <div className="receipt-action-buttons">
-                  <button
-                    type="button"
-                    onClick={handleDownloadPDF}
-                    disabled={isGeneratingPdf}
-                    style={{
-                      flex: 1,
-                      background: "rgba(255,255,255,.05)",
-                      color: "#fff",
-                      border: "1px solid rgba(255,255,255,.1)",
-                      borderRadius: 8,
-                      padding: "12px",
-                      fontWeight: 700,
-                      fontSize: 14,
-                      cursor: isGeneratingPdf ? "wait" : "pointer",
-                      fontFamily: "'Nunito',sans-serif",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: "8px"
-                    }}
-                  >
-                    {isGeneratingPdf ? "⏳ Generating..." : "📄 Download PDF"}
-                  </button>
-                  <button type="button" onClick={generateNewInvoiceId} style={{ flex: 1, background: "rgba(10, 37, 64, 0.5)", color: "#93c5fd", border: "1px solid #1e3a8a", borderRadius: 8, padding: "12px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "'Nunito',sans-serif" }}>
-                    + New Invoice
-                  </button>
+              <div style={{ borderTop: "1px dashed #d1d5db", borderBottom: "1px dashed #d1d5db", padding: "24px 0", marginBottom: 24, display: "flex", flexDirection: "column", gap: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ color: "#6b7280", fontSize: 14 }}>Amount</span>
+                  <span style={{ color: "#000", fontSize: 15, fontWeight: 800 }}>+ {parseFloat(amount).toLocaleString()} {token}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ color: "#6b7280", fontSize: 14 }}>Fiat Value</span>
+                  <span style={{ color: "#000", fontSize: 15, fontWeight: 700 }}>{fiatCurrency === "PHP" ? "₱" : "$"}{parseFloat(amountInFiat).toLocaleString()}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ color: "#6b7280", fontSize: 14 }}>Note</span>
+                  <span style={{ color: "#000", fontSize: 14, fontWeight: 600 }}>{description || "None"}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ color: "#6b7280", fontSize: 14 }}>Date</span>
+                  <span style={{ color: "#000", fontSize: 14, fontWeight: 600 }}>{receiptDate}</span>
                 </div>
               </div>
-            </motion.div>
-          )}
-        </motion.div>
+
+              <div style={{ textAlign: "center", fontSize: 11, color: "#9ca3af", fontFamily: "'DM Mono',monospace", wordBreak: "break-all" }}>
+                <div style={{ color: "#d1d5db", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em", fontSize: 10 }}>Transaction Hash</div>
+                {receiptHash}
+              </div>
+
+            </div>
+
+            <div className="receipt-action-buttons">
+              <button
+                type="button"
+                onClick={handleDownloadPDF}
+                disabled={isGeneratingPdf}
+                style={{ flex: 1, background: "rgba(255,255,255,0.05)", color: "#fff", border: "none", borderRadius: 20, padding: "20px", fontWeight: 700, fontSize: 15, cursor: isGeneratingPdf ? "wait" : "pointer", fontFamily: "'Nunito',sans-serif" }}
+              >
+                {isGeneratingPdf ? "Generating..." : "Save Receipt"}
+              </button>
+              <button
+                type="button"
+                onClick={generateNewInvoiceId}
+                className="premium-btn"
+                style={{ flex: 1, background: isSubscribed ? "linear-gradient(135deg, #f59e0b, #d97706)" : "#fff", color: isSubscribed ? "#fff" : "#000" }}
+              >
+                New Request
+              </button>
+            </div>
+          </motion.div>
+        )}
       </div>
     </div>
   );

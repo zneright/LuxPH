@@ -18,6 +18,8 @@ import Settings from "./pages/merchant/Settings";
 import Subscription from "./pages/merchant/Subscription";
 import SendPayment from "./pages/merchant/SendPayment";
 import Soroban from "./pages/merchant/Soroban";
+import Me from "./pages/merchant/Me";
+import ContingencyVault from "./pages/merchant/ContingencyVault";
 
 import Overview from "./pages/admin/Overview";
 import Merchants from "./pages/admin/Merchants";
@@ -55,6 +57,8 @@ export default function App() {
               <Route path="soroban" element={<Soroban />} />
               <Route path="subscription" element={<Subscription />} />
               <Route path="send-payment" element={<SendPayment />} />
+              <Route path="me" element={<Me />} />
+              <Route path="vault" element={<ContingencyVault />} />
             </Route>
 //e
             <Route

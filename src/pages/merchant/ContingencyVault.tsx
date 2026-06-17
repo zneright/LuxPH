@@ -13,6 +13,7 @@ import {
     BASE_FEE
 } from "@stellar/stellar-sdk";
 import { motion, AnimatePresence } from "framer-motion";
+import CryptoJS from "crypto-js";
 import { LoadingBadge } from "../../components/dashboard/LoadingBadge";
 
 // --- Configuration & Constants ---
@@ -63,7 +64,10 @@ export default function ContingencyVault() {
 
     // Security & Session State
     const [secretKey, setSecretKey] = useState<string>("");
+    const [sessionPin, setSessionPin] = useState<string>("");
     const [isSessionUnlocked, setIsSessionUnlocked] = useState<boolean>(false);
+    const [isReturningUser, setIsReturningUser] = useState<boolean>(false);
+    const [isCheckingUser, setIsCheckingUser] = useState<boolean>(true);
     const [keyError, setKeyError] = useState("");
 
     // Engine State
@@ -84,12 +88,28 @@ export default function ContingencyVault() {
                     const mDoc = await getDoc(doc(db, "merchants", user.uid));
                     if (mDoc.exists()) {
                         const data = mDoc.data();
+
                         if (data.vaultConfig) {
-                            setConfig(data.vaultConfig);
+                            setConfig({
+                                isEnabled: data.vaultConfig.isEnabled ?? false,
+                                deductionPercentage: data.vaultConfig.deductionPercentage ?? 5,
+                                lockDurationDays: data.vaultConfig.lockDurationDays ?? 30,
+                                autoRenew: data.vaultConfig.autoRenew ?? true,
+                                networkUrl: data.vaultConfig.networkUrl || NETWORKS.TESTNET,
+                                targetAsset: data.vaultConfig.targetAsset || "PHPC",
+                            });
+                        }
+
+                        // BUG FIX: Detect if keys were wiped by wallet change!
+                        if (data.encryptedSecretKey && data.encryptedSecretKey !== "") {
+                            setIsReturningUser(true);
+                        } else {
+                            setIsReturningUser(false);
+                            setIsSessionUnlocked(false); // Force back to login/setup
                         }
                     }
+                    setIsCheckingUser(false);
 
-                    // --- NEW: Sync Persistent Telemetry Logs from Firestore ---
                     try {
                         const q = query(collection(db, `merchants/${user.uid}/telemetry`), orderBy("time", "desc"), limit(10));
                         const snap = await getDocs(q);
@@ -124,7 +144,6 @@ export default function ContingencyVault() {
             );
             setAvailableBalance(targetBalance ? targetBalance.balance : "0.00");
 
-            // --- CRITICAL FIX: Fetch up to 100, ordered recently first so new funds don't disappear into page 2 ---
             const claimables = await server.claimableBalances()
                 .claimant(pubKey)
                 .order("desc")
@@ -151,7 +170,7 @@ export default function ContingencyVault() {
                 };
             })
                 .filter(lock => lock.assetCode === config.targetAsset)
-                .sort((a, b) => b.unlockTimestamp - a.unlockTimestamp); // --- CRITICAL FIX: Ensure recent first ---
+                .sort((a, b) => b.unlockTimestamp - a.unlockTimestamp);
 
             setLockedFunds(parsedLocks);
 
@@ -167,40 +186,67 @@ export default function ContingencyVault() {
         }
     };
 
-    const handleUnlockSession = async () => {
+    const handleAuthSession = async () => {
         try {
             setKeyError("");
-            const kp = Keypair.fromSecret(secretKey);
+            if (!auth.currentUser) throw new Error("Authentication required.");
+
+            let finalSecretKey = secretKey;
+
+            if (isReturningUser) {
+                const mDoc = await getDoc(doc(db, "merchants", auth.currentUser.uid));
+                const encryptedData = mDoc.data()?.encryptedSecretKey;
+
+                if (!encryptedData) throw new Error("Vault data corrupted.");
+
+                const bytes = CryptoJS.AES.decrypt(encryptedData, sessionPin);
+                finalSecretKey = bytes.toString(CryptoJS.enc.Utf8);
+
+                if (!finalSecretKey) throw new Error("Incorrect PIN. Decryption failed.");
+            } else {
+                if (sessionPin.length < 4) throw new Error("PIN must be at least 4 characters.");
+                Keypair.fromSecret(secretKey);
+
+                const ciphertext = CryptoJS.AES.encrypt(secretKey, sessionPin).toString();
+
+                await setDoc(doc(db, "merchants", auth.currentUser.uid), {
+                    encryptedSecretKey: ciphertext
+                }, { merge: true });
+
+                setIsReturningUser(true);
+            }
+
+            const kp = Keypair.fromSecret(finalSecretKey);
+            setSecretKey(finalSecretKey);
+
+            localStorage.setItem("luxph_vault_pin", sessionPin);
+
             setIsSessionUnlocked(true);
             syncHorizonData(kp);
 
-            if (auth.currentUser) {
-                await setDoc(doc(db, "merchants", auth.currentUser.uid), {
-                    encryptedSecretKey: secretKey
-                }, { merge: true });
-            }
-
             if (config.isEnabled) {
-                startPaymentListener(kp);
-                addLog("Vault Engine Online. Listening for incoming payments.", "success");
+                startPaymentListener(kp, config);
+                addLog("Vault Engine Online. UI session unlocked.", "success");
             }
-        } catch (err) {
-            setKeyError("Invalid Secret Key. Please check and try again.");
+        } catch (err: any) {
+            setKeyError(err.message || "Invalid input. Please check and try again.");
         }
     };
 
     const handleLockSession = () => {
         if (streamCloserRef.current) streamCloserRef.current();
         setSecretKey("");
+        setSessionPin("");
         setIsSessionUnlocked(false);
         setLockedFunds([]);
+        localStorage.removeItem("luxph_vault_pin");
         addLog("Session securely terminated. Keys cleared from memory.", "warn");
     };
 
-    const startPaymentListener = (kp: Keypair) => {
+    const startPaymentListener = (kp: Keypair, activeConfig: VaultConfig) => {
         if (streamCloserRef.current) streamCloserRef.current();
 
-        const server = new Horizon.Server(config.networkUrl);
+        const server = new Horizon.Server(activeConfig.networkUrl);
         streamCloserRef.current = server.payments()
             .forAccount(kp.publicKey())
             .cursor("now")
@@ -209,39 +255,39 @@ export default function ContingencyVault() {
                     if (processedTxs.current.has(payment.transaction_hash)) return;
                     processedTxs.current.add(payment.transaction_hash);
 
-                    const isNative = payment.asset_type === "native" && config.targetAsset === "XLM";
-                    const isAssetMatch = payment.asset_code === config.targetAsset;
+                    const isNative = payment.asset_type === "native" && activeConfig.targetAsset === "XLM";
+                    const isAssetMatch = payment.asset_code === activeConfig.targetAsset;
 
                     if ((isNative || isAssetMatch) && payment.to === kp.publicKey()) {
                         const amount = parseFloat(payment.amount);
-                        const deduction = amount * (config.deductionPercentage / 100);
+                        const deduction = amount * (activeConfig.deductionPercentage / 100);
 
                         if (deduction > 0) {
-                            addLog(`Detected payment: ${amount} ${config.targetAsset}. Processing ${deduction.toFixed(2)} lock...`, "success");
-                            await executeVaultLock(kp, deduction.toFixed(7));
+                            addLog(`Detected payment: ${amount} ${activeConfig.targetAsset}. Processing ${deduction.toFixed(2)} lock...`, "success");
+                            await executeVaultLock(kp, deduction.toFixed(7), activeConfig);
                         }
                     }
                 }
             });
     };
 
-    const executeVaultLock = async (kp: Keypair, amountToLock: string) => {
+    const executeVaultLock = async (kp: Keypair, amountToLock: string, activeConfig: VaultConfig) => {
         try {
-            const server = new Horizon.Server(config.networkUrl);
+            const server = new Horizon.Server(activeConfig.networkUrl);
             const account = await server.loadAccount(kp.publicKey());
-            const isTestnet = config.networkUrl === NETWORKS.TESTNET;
+            const isTestnet = activeConfig.networkUrl === NETWORKS.TESTNET;
             const networkPassphrase = isTestnet ? Networks.TESTNET : Networks.PUBLIC;
 
             let asset: Asset;
-            if (config.targetAsset === "XLM") {
+            if (activeConfig.targetAsset === "XLM") {
                 asset = Asset.native();
             } else {
-                const issuerData = SUPPORTED_ASSETS.find(a => a.code === config.targetAsset)?.issuer || "";
-                asset = new Asset(config.targetAsset, issuerData);
+                const issuerData = SUPPORTED_ASSETS.find(a => a.code === activeConfig.targetAsset)?.issuer || "";
+                asset = new Asset(activeConfig.targetAsset, issuerData);
             }
 
             const unlockDate = new Date();
-            unlockDate.setDate(unlockDate.getDate() + config.lockDurationDays);
+            unlockDate.setDate(unlockDate.getDate() + activeConfig.lockDurationDays);
             const unlockUnixSeconds = Math.floor(unlockDate.getTime() / 1000).toString();
 
             const strictTimePredicate = Claimant.predicateNot(
@@ -251,9 +297,7 @@ export default function ContingencyVault() {
             const op = Operation.createClaimableBalance({
                 asset: asset,
                 amount: amountToLock,
-                claimants: [
-                    new Claimant(kp.publicKey(), strictTimePredicate)
-                ]
+                claimants: [new Claimant(kp.publicKey(), strictTimePredicate)]
             });
 
             const transaction = new TransactionBuilder(account, {
@@ -284,9 +328,7 @@ export default function ContingencyVault() {
             const account = await server.loadAccount(kp.publicKey());
             const networkPassphrase = config.networkUrl === NETWORKS.TESTNET ? Networks.TESTNET : Networks.PUBLIC;
 
-            const op = Operation.claimClaimableBalance({
-                balanceId: lockId
-            });
+            const op = Operation.claimClaimableBalance({ balanceId: lockId });
 
             const transaction = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase })
                 .addOperation(op)
@@ -319,7 +361,6 @@ export default function ContingencyVault() {
             const networkPassphrase = config.networkUrl === NETWORKS.TESTNET ? Networks.TESTNET : Networks.PUBLIC;
 
             let txBuilder = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase });
-
             const locksToClaim = matureLocks.slice(0, 100);
 
             locksToClaim.forEach(lock => {
@@ -352,7 +393,7 @@ export default function ContingencyVault() {
 
         if (isSessionUnlocked && newConfig.isEnabled) {
             const kp = Keypair.fromSecret(secretKey);
-            startPaymentListener(kp);
+            startPaymentListener(kp, newConfig);
             addLog("Engine settings updated and saved.", "success");
         } else if (!newConfig.isEnabled && streamCloserRef.current) {
             streamCloserRef.current();
@@ -365,7 +406,6 @@ export default function ContingencyVault() {
         const newLog = { id: Math.random().toString(), msg, time: new Date(), type };
         setRecentLogs(prev => [newLog, ...prev].slice(0, 10));
 
-        // --- NEW: Persist to Firestore so the user has telegraphy logs even after refresh ---
         if (auth.currentUser) {
             try {
                 await addDoc(collection(db, `merchants/${auth.currentUser.uid}/telemetry`), {
@@ -380,24 +420,28 @@ export default function ContingencyVault() {
     };
 
     const matureCount = lockedFunds.filter(lock => lock.isUnlockable).length;
-
-    // Pagination Calculations
     const indexOfLastItem = currentPage * ITEMS_PER_PAGE;
     const indexOfFirstItem = indexOfLastItem - ITEMS_PER_PAGE;
     const currentItems = lockedFunds.slice(indexOfFirstItem, indexOfLastItem);
     const totalPages = Math.ceil(lockedFunds.length / ITEMS_PER_PAGE);
 
+    if (isCheckingUser) {
+        return <div style={{ color: "#fff", textAlign: "center", padding: "40px" }}>Initializing Vault Architecture...</div>;
+    }
+
     return (
         <div style={{ fontFamily: "'Nunito',sans-serif", color: "#fff", padding: "12px", boxSizing: "border-box" }}>
             <style>{`
-        .vault-card { background: rgba(15, 17, 26, 0.6); backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,.06); border-radius: 24px; padding: 32px; }
-        .tab-btn { background: transparent; border: none; color: #9ca3af; font-family: 'Nunito', sans-serif; font-weight: 800; font-size: 15px; padding: 12px 24px; cursor: pointer; transition: 0.3s; position: relative; }
-        .tab-btn.active { color: #f59e0b; }
-        .tab-btn.active::after { content: ''; position: absolute; bottom: 0; left: 20%; right: 20%; height: 3px; background: #f59e0b; border-radius: 3px 3px 0 0; }
-        .stat-box { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.05); padding: 24px; border-radius: 16px; }
-        .styled-input { width: 100%; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,.1); border-radius: 12px; padding: 14px 16px; color: #fff; font-size: 15px; outline: none; transition: all 0.3s; font-family: 'DM Mono', monospace; }
-        .styled-input:focus { border-color: #f59e0b; box-shadow: 0 0 0 2px rgba(245,158,11,0.2); }
-      `}</style>
+                .vault-card { background: rgba(15, 17, 26, 0.6); backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,.06); border-radius: 24px; padding: 32px; }
+                .tab-btn { background: transparent; border: none; color: #9ca3af; font-family: 'Nunito', sans-serif; font-weight: 800; font-size: 15px; padding: 12px 24px; cursor: pointer; transition: 0.3s; position: relative; }
+                .tab-btn.active { color: #f59e0b; }
+                .tab-btn.active::after { content: ''; position: absolute; bottom: 0; left: 20%; right: 20%; height: 3px; background: #f59e0b; border-radius: 3px 3px 0 0; }
+                .stat-box { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.05); padding: 24px; border-radius: 16px; }
+                .styled-input { width: 100%; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,.1); border-radius: 12px; padding: 14px 16px; color: #fff; font-size: 15px; outline: none; transition: all 0.3s; font-family: 'DM Mono', monospace; }
+                .styled-input:focus { border-color: #f59e0b; box-shadow: 0 0 0 2px rgba(245,158,11,0.2); }
+                .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; }
+                @media (max-width: 768px) { .settings-grid { grid-template-columns: 1fr; gap: 20px; } }
+            `}</style>
 
             <div style={{ marginBottom: 32 }}>
                 <h1 style={{ fontSize: 36, fontWeight: 900, margin: 0, letterSpacing: "-0.02em" }}>Contingency Vault</h1>
@@ -409,25 +453,39 @@ export default function ContingencyVault() {
                     <div style={{ fontSize: 50, marginBottom: 16, filter: "drop-shadow(0 0 20px rgba(245,158,11,0.4))" }}>🔒</div>
                     <h2 style={{ fontSize: 24, fontWeight: 800, marginBottom: 8 }}>Secure Session Import</h2>
                     <p style={{ color: "#9ca3af", fontSize: 13, marginBottom: 24, lineHeight: 1.6 }}>
-                        To automate contingency deductions and on-chain lock creations, your secret key is required.
-                        <br /><span style={{ color: "#f59e0b" }}>Keys are encrypted in ephemeral memory and never transmitted or logged.</span>
+                        {isReturningUser
+                            ? "Your encrypted vault data was detected. Please enter your PIN to view or edit vault settings."
+                            : "To automate contingency deductions, your secret key is required. It will be encrypted locally using a PIN."}
+                        <br /><span style={{ color: "#f59e0b" }}>Keys are never transmitted or logged in plaintext.</span>
                     </p>
+
+                    {!isReturningUser && (
+                        <input
+                            type="password"
+                            placeholder="Stellar Secret Key (S...)"
+                            value={secretKey}
+                            onChange={(e) => setSecretKey(e.target.value)}
+                            className="styled-input"
+                            style={{ marginBottom: 12, textAlign: "center", borderColor: keyError && !secretKey ? "#ef4444" : "rgba(255,255,255,0.1)" }}
+                        />
+                    )}
 
                     <input
                         type="password"
-                        placeholder="S..."
-                        value={secretKey}
-                        onChange={(e) => setSecretKey(e.target.value)}
+                        placeholder={isReturningUser ? "Enter Vault PIN to Decrypt UI" : "Create Vault PIN (Min 4 chars)"}
+                        value={sessionPin}
+                        onChange={(e) => setSessionPin(e.target.value)}
                         className="styled-input"
-                        style={{ marginBottom: 12, textAlign: "center", borderColor: keyError ? "#ef4444" : "rgba(255,255,255,0.1)" }}
+                        style={{ marginBottom: 12, textAlign: "center", borderColor: keyError && !sessionPin ? "#ef4444" : "rgba(255,255,255,0.1)" }}
                     />
+
                     {keyError && <div style={{ color: "#ef4444", fontSize: 12, marginBottom: 16, fontFamily: "'DM Mono', monospace" }}>{keyError}</div>}
 
                     <button
-                        onClick={handleUnlockSession}
+                        onClick={handleAuthSession}
                         style={{ width: "100%", background: "linear-gradient(90deg, #f59e0b, #d97706)", color: "#fff", border: "none", borderRadius: 14, padding: "16px", fontWeight: 800, fontSize: 16, cursor: "pointer", boxShadow: "0 8px 25px -6px rgba(245,158,11,0.5)" }}
                     >
-                        Authenticate & Initialize Vault
+                        {isReturningUser ? "Decrypt & Unlock Vault UI" : "Encrypt & Initialize Vault"}
                     </button>
                 </motion.div>
             ) : (
@@ -450,7 +508,6 @@ export default function ContingencyVault() {
                     <AnimatePresence mode="wait">
                         {activeTab === 'dashboard' ? (
                             <motion.div key="dashboard" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="vault-card">
-
                                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 20, marginBottom: 32 }}>
                                     <div className="stat-box">
                                         <div style={{ fontSize: 11, fontFamily: "'DM Mono', monospace", color: "#9ca3af", letterSpacing: ".06em", marginBottom: 8, textTransform: "uppercase" }}>Total Immutable Value</div>
@@ -470,7 +527,6 @@ export default function ContingencyVault() {
 
                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.1)", paddingBottom: 12, marginBottom: 20 }}>
                                     <h3 style={{ fontSize: 18, fontWeight: 800, margin: 0 }}>Encrypted Allocations</h3>
-
                                     {matureCount > 0 && !isSyncing && (
                                         <button
                                             onClick={handleClaimAllMature}
@@ -519,7 +575,6 @@ export default function ContingencyVault() {
                                                     </div>
                                                 ))}
 
-                                                {/* Pagination Controls */}
                                                 {totalPages > 1 && (
                                                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16 }}>
                                                         <button
@@ -527,7 +582,7 @@ export default function ContingencyVault() {
                                                             disabled={currentPage === 1}
                                                             style={{ padding: "8px 16px", background: "rgba(255,255,255,0.1)", color: "#fff", border: "none", borderRadius: 8, cursor: currentPage === 1 ? "not-allowed" : "pointer", opacity: currentPage === 1 ? 0.5 : 1 }}
                                                         >
-                                                            ← Previous
+                                                            &larr; Previous
                                                         </button>
                                                         <span style={{ fontSize: 13, color: "#9ca3af" }}>Page {currentPage} of {totalPages}</span>
                                                         <button
@@ -535,7 +590,7 @@ export default function ContingencyVault() {
                                                             disabled={currentPage === totalPages}
                                                             style={{ padding: "8px 16px", background: "rgba(255,255,255,0.1)", color: "#fff", border: "none", borderRadius: 8, cursor: currentPage === totalPages ? "not-allowed" : "pointer", opacity: currentPage === totalPages ? 0.5 : 1 }}
                                                         >
-                                                            Next →
+                                                            Next &rarr;
                                                         </button>
                                                     </div>
                                                 )}
@@ -557,8 +612,7 @@ export default function ContingencyVault() {
                             </motion.div>
                         ) : (
                             <motion.div key="settings" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="vault-card">
-                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 32 }}>
-
+                                <div className="settings-grid">
                                     <div>
                                         <div style={{ marginBottom: 24 }}>
                                             <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
@@ -627,7 +681,6 @@ export default function ContingencyVault() {
                                             </div>
                                         </div>
                                     </div>
-
                                 </div>
                             </motion.div>
                         )}

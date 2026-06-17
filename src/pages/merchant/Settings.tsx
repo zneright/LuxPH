@@ -2,10 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { auth, db } from '../../config/firebase';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { useWallet } from '../../contexts/WalletContext';
-import { doc, getDoc, setDoc, updateDoc, collection, getDocs } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
 import MonthlyUsageCard from "../../components/dashboard/MonthlyUsageCard";
 import InvoiceDashboard from './InvoiceDashboard';
-import ContingencyVault from './ContingencyVault'; // Imported Vault Component
 import { LoadingBadge } from "../../components/dashboard/LoadingBadge";
 import { motion } from "framer-motion";
 
@@ -27,11 +26,10 @@ export default function Settings() {
   const [merchantData, setMerchantData] = useState<MerchantData | null>(null);
   const [stellarAddress, setStellarAddress] = useState<string>("");
 
-  // Destructure activeWallet or activeWalletId from your context
   const {
     address: walletAddress,
-    activeWallet,       // Assuming your context exports the active wallet object
-    activeWalletId,     // Or just the string ID (e.g., 'lobstr', 'freighter')
+    activeWallet,
+    activeWalletId,
     isConnecting,
     connect: connectWalletAdapter,
     disconnect: disconnectWalletAdapter
@@ -40,9 +38,6 @@ export default function Settings() {
   const [monthlyUsage, setMonthlyUsage] = useState<number>(0);
   const [isSubscribed, setIsSubscribed] = useState<boolean>(false);
   const [freeTierLimit, setFreeTierLimit] = useState<number>(100000);
-  const [contingencyPercentage, setContingencyPercentage] = useState<number>(0);
-  const [contingencyLockValue, setContingencyLockValue] = useState<number>(30);
-  const [contingencyLockUnit, setContingencyLockUnit] = useState<string>("days");
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -68,17 +63,6 @@ export default function Settings() {
 
           if (data.stellarPublicKey) {
             setStellarAddress(data.stellarPublicKey);
-          }
-          if ((data as any).vaultConfig) {
-            const vc = (data as any).vaultConfig;
-            setContingencyPercentage(Number(vc.deductionPercentage || 0));
-            setContingencyLockValue(Number(vc.lockDurationDays || 30));
-            setContingencyLockUnit(vc.lockUnit || "days");
-          } else if ((data as any).contingencyConfig) {
-            const cc = (data as any).contingencyConfig;
-            setContingencyPercentage(Number(cc.percentage || 0));
-            setContingencyLockValue(Number(cc.lockValue || 30));
-            setContingencyLockUnit(cc.lockUnit || "days");
           }
         }
 
@@ -107,24 +91,31 @@ export default function Settings() {
     });
 
     return () => unsubscribe();
-  }, [walletAddress, user, merchantData]);
+  }, []);
 
+  // BUG FIX: Detect Wallet Changes and WIPE Vault Memory if it changes!
   useEffect(() => {
-    const effectiveAddress = walletAddress || merchantData?.stellarPublicKey || "";
-    setStellarAddress(effectiveAddress);
+    if (user && walletAddress && merchantData) {
+      if (walletAddress !== merchantData.stellarPublicKey) {
+        const syncNewAddress = async () => {
+          try {
+            const userRef = doc(db, "merchants", user.uid);
+            await setDoc(userRef, {
+              stellarPublicKey: walletAddress,
+              encryptedSecretKey: "", // Wipe old vault keys!
+              vaultConfig: { isEnabled: false } // Disable old vault!
+            }, { merge: true });
 
-    if (user && walletAddress && walletAddress !== merchantData?.stellarPublicKey) {
-      const syncAddress = async () => {
-        try {
-          const userRef = doc(db, "merchants", user.uid);
-          await setDoc(userRef, { stellarPublicKey: walletAddress }, { merge: true });
-        } catch (error) {
-          console.error("Failed to sync wallet address to merchant profile:", error);
-        }
-      };
-      syncAddress();
+            setStellarAddress(walletAddress);
+            setMerchantData({ ...merchantData, stellarPublicKey: walletAddress });
+          } catch (error) {
+            console.error("Failed to sync new wallet address:", error);
+          }
+        };
+        syncNewAddress();
+      }
     }
-  }, [walletAddress, merchantData?.stellarPublicKey, user]);
+  }, [walletAddress, user, merchantData]);
 
   const connectWallet = async () => {
     await connectWalletAdapter('stellar-wallets-kit');
@@ -135,25 +126,17 @@ export default function Settings() {
     setStellarAddress("");
     if (user) {
       const userRef = doc(db, "merchants", user.uid);
-      await updateDoc(userRef, { stellarPublicKey: "" });
+      // BUG FIX: Wipe keys on disconnect so the next wallet gets a blank slate
+      await setDoc(userRef, {
+        stellarPublicKey: "",
+        encryptedSecretKey: "",
+        vaultConfig: { isEnabled: false }
+      }, { merge: true });
+
+      setMerchantData(prev => prev ? { ...prev, stellarPublicKey: "" } : null);
     }
   };
 
-  const saveContingencySettings = async () => {
-    if (!user) return alert("Sign in to save contingency settings");
-    try {
-      const userRef = doc(db, "merchants", user.uid);
-      await setDoc(userRef, { contingencyConfig: { percentage: contingencyPercentage, lockValue: contingencyLockValue, lockUnit: contingencyLockUnit } }, { merge: true });
-      alert("Contingency settings saved.");
-      const updated = await getDoc(userRef);
-      if (updated.exists()) setMerchantData(updated.data() as MerchantData);
-    } catch (err) {
-      console.error("Failed to save contingency settings:", err);
-      alert("Failed to save contingency settings.");
-    }
-  };
-
-  // Helper to dynamically get the beautiful name of the connected wallet
   const getWalletDisplayName = () => {
     const rawName = (activeWallet?.name || activeWalletId || "App").toLowerCase();
     if (rawName.includes("lobstr")) return "Lobstr Vault";
@@ -184,7 +167,6 @@ export default function Settings() {
           .st-grid-layout { grid-template-columns: 1fr 1fr; }
         }
 
-        /* 🚨 Standardized override for Stellar Wallets Kit 🚨 */
         stellar-wallets-modal,
         #stellar-wallets-kit-modal-root,
         [id^="stellar-wallets-modal"] {
@@ -216,7 +198,7 @@ export default function Settings() {
         {stellarAddress ? (
           <div style={{ width: "100%", maxWidth: "500px" }}>
             <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", background: "rgba(74,222,128,.1)", border: "1px solid rgba(74,222,128,.2)", borderRadius: 20, marginBottom: 20, fontSize: 13, color: "#86efac", fontWeight: 700 }}>
-              ✓ Linked Successfully via {getWalletDisplayName()}
+              &uarr; Linked Successfully via {getWalletDisplayName()}
             </div>
             <div style={{ marginBottom: 20, textAlign: "left" }}>
               <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>Active Stellar Address</div>
@@ -229,7 +211,7 @@ export default function Settings() {
         ) : (
           <div style={{ width: "100%", maxWidth: "450px" }}>
             <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", background: "rgba(250,204,21,.1)", border: "1px solid rgba(250,204,21,.2)", borderRadius: 20, marginBottom: 16, fontSize: 13, color: "#fde047", fontWeight: 700 }}>
-              ⚠ Secure Connection Required
+              &#9888; Secure Connection Required
             </div>
             <h2 style={{ color: "#fff", fontSize: 22, fontFamily: "'Nunito',sans-serif", margin: "0 0 12px 0" }}>Link Your Wallet App</h2>
             <p style={{ fontSize: 14, color: "#9ca3af", marginBottom: 20, lineHeight: 1.5 }}>
@@ -238,7 +220,7 @@ export default function Settings() {
 
             <div style={{ background: "rgba(59, 130, 246, 0.08)", border: "1px solid rgba(59, 130, 246, 0.2)", borderRadius: "10px", padding: "14px", marginBottom: "24px", textAlign: "left" }}>
               <div style={{ fontSize: "13px", color: "#60a5fa", fontWeight: 800, marginBottom: "6px", fontFamily: "'Nunito',sans-serif", display: "flex", alignItems: "center", gap: "6px" }}>
-                🖥️ Desktop Browser Setup
+                &#128453;&#65039; Desktop Browser Setup
               </div>
               <div style={{ fontSize: "13px", color: "#d1d5db", lineHeight: "1.5" }}>
                 If you are on a computer, you <strong>must</strong> have a wallet extension installed (like Lobstr, Freighter, or xBull) before connecting. Make sure it is unlocked!
@@ -258,10 +240,10 @@ export default function Settings() {
               <p style={{ fontSize: 12, color: "#6b7280", margin: 0 }}>Don't have a wallet extension yet? Get one here:</p>
               <div className="st-app-links">
                 <a href="https://lobstr.co/" target="_blank" rel="noreferrer" className="st-app-link-btn">
-                  🦞 Get Lobstr
+                  &#129406; Get Lobstr
                 </a>
                 <a href="https://freighter.app/" target="_blank" rel="noreferrer" className="st-app-link-btn">
-                  🚢 Get Freighter
+                  &#128674; Get Freighter
                 </a>
               </div>
             </div>
@@ -340,14 +322,6 @@ export default function Settings() {
           />
         </div>
       )}
-
-      {/* NEW: Contingency Vault Mount Point */}
-      {stellarAddress && user && (
-        <div style={{ marginTop: 48, paddingTop: 32, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
-          <ContingencyVault />
-        </div>
-      )}
-
     </motion.div>
   );
 }
