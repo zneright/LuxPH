@@ -154,19 +154,18 @@ export default function Settings() {
 
   const offlineUri = stellarAddress ? `web+stellar:pay?destination=${stellarAddress}&memo=OFFLINE-QR&memo_type=text` : "";
 
-  // 🚀 PURE CANVAS 2D STANDEE GENERATOR WITH NATIVE LUXPH LOGO
+  // 🚀 STANDEE GENERATOR: Dynamic Font Sizing & Logo Overlay
   const handleDownloadStandee = async () => {
     setIsGeneratingStandee(true);
     try {
       const qrCanvas = document.getElementById("hidden-qr-canvas") as HTMLCanvasElement;
       if (!qrCanvas) throw new Error("QR Canvas missing");
 
-      // Load the exact SVG AnimatedLogo as an image
       const logoImg = await generateLuxLogoImage();
 
       const canvas = document.createElement("canvas");
       canvas.width = 800;
-      canvas.height = 1200; // Standee aspect ratio (2:3)
+      canvas.height = 1200;
       const ctx = canvas.getContext("2d");
       if (!ctx) throw new Error("Canvas context failed");
 
@@ -183,31 +182,40 @@ export default function Settings() {
       ctx.moveTo(0, 0);
       ctx.lineTo(800, 0);
       ctx.lineTo(800, 240);
-      ctx.quadraticCurveTo(400, 300, 0, 200); // Elegant wave
+      ctx.quadraticCurveTo(400, 300, 0, 200);
       ctx.fill();
 
-      // 3. Draw The Native LuxPH Logo
-      ctx.drawImage(logoImg, 340, 40, 120, 120);
+      // 3. Removed redundant header logo as requested
+      // ctx.drawImage(logoImg, 340, 40, 120, 120);
 
       ctx.fillStyle = "#ffffff";
-      ctx.font = "bold 28px Arial";
+      ctx.font = "bold 40px Arial";
       ctx.textAlign = "center";
-      ctx.fillText("LUX PH", 400, 185);
+      // Moved the text up slightly to balance the missing logo
+      ctx.fillText("LUX PH", 400, 130);
 
-      // 4. Store Branding
+      // 4. Store Branding & DYNAMIC FONT SIZING
       ctx.fillStyle = "#111827";
       ctx.font = "bold 20px monospace";
       ctx.letterSpacing = "2px";
       ctx.fillText("OFFICIAL MERCHANT", 400, 320);
 
-      ctx.fillStyle = "#111827";
-      ctx.font = "bold 56px Arial";
-      ctx.letterSpacing = "0px";
       const bName = merchantData?.businessName || "Store";
-      ctx.fillText(bName.length > 20 ? bName.substring(0, 20) + "..." : bName, 400, 390);
+
+      // 🚀 Auto-shrink font until it fits inside the Standee Width (max 700px)
+      let fontSize = 56;
+      ctx.font = `bold ${fontSize}px Arial`;
+      while (ctx.measureText(bName).width > 700 && fontSize > 24) {
+        fontSize -= 2;
+        ctx.font = `bold ${fontSize}px Arial`;
+      }
+
+      ctx.fillStyle = "#111827";
+      ctx.fillText(bName, 400, 390);
 
       ctx.fillStyle = "#6b7280";
       ctx.font = "26px Arial";
+      ctx.letterSpacing = "0px";
       ctx.fillText("Scan to pay securely via Stellar Network", 400, 440);
 
       // 5. Draw QR Code Frame & Shadow
@@ -224,18 +232,25 @@ export default function Settings() {
       ctx.lineWidth = 4;
       ctx.stroke();
 
-      // 6. Draw Actual QR
+      // 6. Draw Actual QR Code
       ctx.drawImage(qrCanvas, 200, 560, 400, 400);
 
-      // 7. Footer Meta
+      // 7. Draw the Logo smack in the middle of the QR Code!
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.arc(400, 760, 50, 0, 2 * Math.PI); // Center X: 400, Center Y: 760
+      ctx.fill();
+      ctx.drawImage(logoImg, 355, 715, 90, 90);
+
+      // 8. Footer Meta
       ctx.fillStyle = "#9ca3af";
       ctx.font = "bold 20px monospace";
       ctx.letterSpacing = "1px";
       ctx.fillText("NETWORK REF: OFFLINE-QR", 400, 1100);
 
-      // 8. Trigger Download
+      // 9. Trigger Download
       const link = document.createElement("a");
-      link.download = `LuxPH_Standee_${merchantData?.businessName || "Store"}.png`;
+      link.download = `LuxPH_Standee_${bName.replace(/\s+/g, '_')}.png`;
       link.href = canvas.toDataURL("image/png");
       link.click();
     } catch (err) {
@@ -259,8 +274,8 @@ export default function Settings() {
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ padding: "16px", maxWidth: 1000, margin: "0 auto", boxSizing: "border-box" }}>
 
-      {/* 🚀 BENTO GRID CSS */}
       <style>{`
+        /* 🚀 Fully Responsive Bento Grid */
         .bento-header { margin-bottom: 24px; padding-left: 8px; }
         .bento-header h1 { font-size: clamp(28px, 4vw, 36px); font-weight: 900; color: #111827; margin: 0 0 4px 0; font-family: 'Nunito', sans-serif; letter-spacing: -0.02em; }
         .bento-header p { color: #6b7280; font-size: 15px; margin: 0; font-weight: 500; }
@@ -287,6 +302,7 @@ export default function Settings() {
             flex-direction: column;
             position: relative;
             overflow: hidden;
+            box-sizing: border-box;
         }
         .bento-card:hover {
             box-shadow: 0 15px 35px -5px rgba(0,0,0,0.06);
@@ -300,22 +316,64 @@ export default function Settings() {
         .bento-title { font-size: 16px; font-weight: 800; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.05em; font-family: 'DM Mono', monospace; margin-bottom: 24px; display: flex; align-items: center; gap: 8px; }
 
         /* Inputs & Buttons */
-        .bento-input { width: 100%; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 16px; padding: 16px 20px; color: #111827; font-size: 15px; outline: none; font-family: 'DM Mono', monospace; font-weight: 700; transition: border 0.2s; }
+        .bento-input { width: 100%; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 16px; padding: 16px 20px; color: #111827; font-size: 15px; outline: none; font-family: 'DM Mono', monospace; font-weight: 700; transition: border 0.2s; box-sizing: border-box; }
         .bento-input:focus { border-color: #8b5cf6; background: #fff; }
 
-        .bento-btn-primary { background: linear-gradient(135deg, #111827, #374151); color: #fff; border: none; border-radius: 16px; padding: 18px 24px; font-size: 15px; font-weight: 800; cursor: pointer; font-family: 'Nunito', sans-serif; transition: all 0.2s; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 100%; display: flex; justify-content: center; align-items: center; gap: 8px; }
+        .bento-btn-primary { background: linear-gradient(135deg, #111827, #374151); color: #fff; border: none; border-radius: 16px; padding: 18px 24px; font-size: 15px; font-weight: 800; cursor: pointer; font-family: 'Nunito', sans-serif; transition: all 0.2s; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 100%; display: flex; justify-content: center; align-items: center; gap: 8px; box-sizing: border-box; }
         .bento-btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,0.2); }
         .bento-btn-primary:active { transform: scale(0.97); }
 
-        .bento-btn-danger { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; border-radius: 16px; padding: 14px 20px; font-size: 14px; font-weight: 800; cursor: pointer; font-family: 'Nunito', sans-serif; transition: all 0.2s; width: 100%; }
+        .bento-btn-danger { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; border-radius: 16px; padding: 14px 20px; font-size: 14px; font-weight: 800; cursor: pointer; font-family: 'Nunito', sans-serif; transition: all 0.2s; width: 100%; box-sizing: border-box; }
         .bento-btn-danger:hover { background: #fee2e2; }
 
-        .app-link { background: #f3f4f6; color: #374151; padding: 10px 16px; border-radius: 12px; font-size: 13px; font-weight: 800; text-decoration: none; border: 1px solid #e5e7eb; transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px; }
+        .app-link { background: #f3f4f6; color: #374151; padding: 10px 16px; border-radius: 12px; font-size: 13px; font-weight: 800; text-decoration: none; border: 1px solid #e5e7eb; transition: all 0.2s; display: flex; flex: 1; justify-content: center; align-items: center; gap: 6px; box-sizing: border-box; white-space: nowrap; }
         .app-link:hover { background: #e5e7eb; border-color: #d1d5db; }
+        
+        .identity-flex { display: flex; align-items: center; gap: 20px; margin-bottom: 24px; }
+        .identity-avatar { width: 72px; height: 72px; border-radius: 20px; background: linear-gradient(135deg,#8b5cf6,#6366f1); display: flex; align-items: center; justify-content: center; font-size: 32px; font-family: 'Nunito',sans-serif; font-weight: 900; color: #fff; flex-shrink: 0; box-shadow: 0 8px 20px rgba(139,92,246,0.3); }
+        .links-row { display: flex; gap: 8px; flex-wrap: wrap; width: 100%; margin-top: auto; }
+
+        /* 🚀 Mobile scattered fix / Non-bento style */
+        @media (max-width: 768px) {
+          .bento-grid { 
+            display: flex; 
+            flex-direction: column; 
+            gap: 0; 
+          }
+          .bento-card { 
+            padding: 24px 0; 
+            border: none; 
+            border-radius: 0; 
+            box-shadow: none; 
+            border-bottom: 1px solid #e5e7eb; 
+            background: transparent !important; 
+          }
+          .bento-card:last-child {
+            border-bottom: none;
+          }
+          .bento-gradient-top { display: none; }
+          
+          .identity-flex { flex-direction: row; align-items: center; gap: 16px; }
+          .identity-avatar { width: 56px; height: 56px; font-size: 24px; border-radius: 16px; }
+          
+          .standee-preview-container { 
+            width: 100%; 
+            max-width: 280px; 
+            margin: 24px auto 0 auto; 
+            transform: none !important; /* Disables rotation on mobile to save space */
+          }
+          
+          .standee-flex-row { flex-direction: column; text-align: center; }
+          .standee-flex-row button { justify-content: center; width: 100%; }
+          
+          .links-row { flex-direction: column; }
+          .app-link { width: 100%; }
+        }
       `}</style>
 
       {/* Hidden QR for Canvas extraction */}
       <div style={{ display: "none" }}>
+        {/* We use level="H" (High Error Correction) so the QR still works even with a logo covering the center */}
         <QRCodeCanvas id="hidden-qr-canvas" value={offlineUri} size={400} level="H" />
       </div>
 
@@ -334,15 +392,15 @@ export default function Settings() {
             Identity
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 24 }}>
-            <div style={{ width: 72, height: 72, borderRadius: 20, background: "linear-gradient(135deg,#8b5cf6,#6366f1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32, fontFamily: "'Nunito',sans-serif", fontWeight: 900, color: "#fff", flexShrink: 0, boxShadow: "0 8px 20px rgba(139,92,246,0.3)" }}>
+          <div className="identity-flex">
+            <div className="identity-avatar">
               {merchantData?.businessName ? merchantData.businessName.charAt(0).toUpperCase() : (user?.email ? user.email.charAt(0).toUpperCase() : "U")}
             </div>
-            <div style={{ overflow: "hidden" }}>
-              <div style={{ fontSize: 24, fontWeight: 900, fontFamily: "'Nunito',sans-serif", color: "#111827", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <div style={{ overflow: "hidden", flex: 1, width: "100%", textAlign: "left" }}>
+              <div style={{ fontSize: "clamp(20px, 5vw, 24px)", fontWeight: 900, fontFamily: "'Nunito',sans-serif", color: "#111827", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 {merchantData?.businessName || "Loading..."}
               </div>
-              <div style={{ fontSize: 14, color: "#6b7280", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              <div style={{ fontSize: "14px", color: "#6b7280", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 {merchantData?.email || user?.email}
               </div>
             </div>
@@ -378,7 +436,7 @@ export default function Settings() {
                 {isConnecting ? <LoadingBadge text="Connecting..." variant="secure" /> : "Connect Wallet App"}
               </button>
 
-              <div style={{ marginTop: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <div className="links-row">
                 <a href="https://lobstr.co/" target="_blank" rel="noreferrer" className="app-link">🦀 Lobstr</a>
                 <a href="https://freighter.app/" target="_blank" rel="noreferrer" className="app-link">⚓ Freighter</a>
               </div>
@@ -401,13 +459,13 @@ export default function Settings() {
               Physical Store Tools
             </div>
 
-            <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 32, alignItems: "center" }}>
+            <div className="standee-flex-row" style={{ display: "flex", gap: 32, alignItems: "center" }}>
 
               <div style={{ flex: 1 }}>
-                <h2 style={{ fontSize: "clamp(24px, 4vw, 32px)", fontWeight: 900, color: "#0f172a", margin: "0 0 12px 0", fontFamily: "'Nunito',sans-serif", lineHeight: 1.1, letterSpacing: "-0.02em" }}>
+                <h2 style={{ fontSize: "clamp(24px, 4vw, 32px)", fontWeight: 900, color: "#0f172a", margin: "0 0 12px 0", fontFamily: "'Nunito',sans-serif", lineHeight: 1.1, letterSpacing: "-0.02em", textAlign: isMobile ? "center" : "left" }}>
                   Printable Pay Standee
                 </h2>
-                <p style={{ fontSize: 15, color: "#475569", lineHeight: 1.6, marginBottom: 24, fontWeight: 500 }}>
+                <p style={{ fontSize: 15, color: "#475569", lineHeight: 1.6, marginBottom: 24, fontWeight: 500, textAlign: isMobile ? "center" : "left" }}>
                   Generate an ultra-high resolution, print-ready QR standee. Scanning this automatically injects an <strong>OFFLINE-QR</strong> tracking tag into the blockchain so you can track in-store sales on your ledger.
                 </p>
                 <button onClick={handleDownloadStandee} disabled={isGeneratingStandee} className="bento-btn-primary" style={{ background: "linear-gradient(135deg, #10b981, #059669)", width: isMobile ? "100%" : "max-content", padding: "16px 32px" }}>
@@ -420,12 +478,24 @@ export default function Settings() {
                 </button>
               </div>
 
-              {/* Interactive Preview Box */}
-              <div style={{ width: 220, background: "#fff", padding: 16, borderRadius: 24, boxShadow: "0 20px 40px -10px rgba(0,0,0,0.1)", border: "4px solid #fff", position: "relative", transform: "rotate(2deg)" }}>
+              {/* 🚀 Mobile-Optimized Interactive Preview Box */}
+              <div className="standee-preview-container" style={{ background: "#fff", padding: 16, borderRadius: 24, boxShadow: "0 20px 40px -10px rgba(0,0,0,0.1)", border: "4px solid #fff", position: "relative", transform: isMobile ? "rotate(0deg)" : "rotate(2deg)" }}>
                 <div style={{ background: "linear-gradient(135deg, #10b981, #3b82f6)", height: 60, borderRadius: 12, marginBottom: 12 }} />
-                <div style={{ width: "100%", aspectRatio: "1/1", background: "#f8fafc", borderRadius: 12, border: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "center" }}>
+
+                {/* Visual Fake QR Preview with Logo */}
+                <div style={{ width: "100%", aspectRatio: "1/1", background: "#f8fafc", borderRadius: 12, border: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
                   <QRCodeCanvas value={offlineUri} size={140} level="H" fgColor="#0f172a" />
+                  {/* Fake UI Preview Logo Overlay */}
+                  <div style={{ position: "absolute", background: "#fff", borderRadius: "50%", width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", padding: 4 }}>
+                    {/* Miniature SVG representation of the logo just for the UI preview */}
+                    <svg width="24" height="24" viewBox="0 0 240 240" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M76 42V134 C76 160 94 178 120 178H186" stroke="#22C55E" strokeWidth="22" strokeLinecap="round" strokeLinejoin="round" />
+                      <rect x="44" y="24" width="64" height="64" rx="20" fill="#22C55E" />
+                      <rect x="154" y="146" width="64" height="64" rx="20" fill="#3B82F6" />
+                    </svg>
+                  </div>
                 </div>
+
                 <div style={{ height: 12, background: "#f1f5f9", borderRadius: 4, width: "60%", margin: "16px auto 0" }} />
               </div>
 

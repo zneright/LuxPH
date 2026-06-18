@@ -3,6 +3,9 @@ import { StellarWalletsKit, Networks as StellarKitNetworks } from '@creit.tech/s
 import { AlbedoModule } from '@creit.tech/stellar-wallets-kit/modules/albedo';
 import { FreighterModule } from '@creit.tech/stellar-wallets-kit/modules/freighter';
 import { LobstrModule } from '@creit.tech/stellar-wallets-kit/modules/lobstr';
+// 🚀 FIX: The export uses a lowercase 'x' (xBullModule)
+import { xBullModule } from '@creit.tech/stellar-wallets-kit/modules/xbull';
+import { WalletConnectModule } from '@creit.tech/stellar-wallets-kit/modules/wallet-connect';
 import { Networks } from '@stellar/stellar-sdk';
 import { useNetwork } from './NetworkContext';
 
@@ -15,7 +18,6 @@ export interface WalletAdapter {
     id: string;
     name: string;
     isAvailable(): boolean;
-    // 🚀 NEW: We now return the exact wallet NAME alongside the address!
     connect(network?: StellarKitNetworks): Promise<{ address: string; name: string }>;
     disconnect(): Promise<void>;
     signTransaction(xdr: string, networkPassphrase: string): Promise<string>;
@@ -40,7 +42,7 @@ class FreighterAdapter implements WalletAdapter {
         const access = await requestAccess();
 
         if (access.error) throw new Error(access.error);
-        return { address: access.address, name: "freighter" }; // Identifies as freighter
+        return { address: access.address, name: "freighter" };
     }
 
     async disconnect(): Promise<void> {
@@ -70,7 +72,6 @@ class FreighterAdapter implements WalletAdapter {
         }
     }
 
-    // Helper for waking up the kit (reusing SWK logic internally if needed)
     private initializeKit(network: StellarKitNetworks) {
         if (!document.getElementById('swk-global-modal-fix')) {
             const style = document.createElement('style');
@@ -94,7 +95,6 @@ class StellarWalletsKitAdapter implements WalletAdapter {
             const style = document.createElement('style');
             style.id = 'swk-global-modal-fix';
 
-            // 🚀 LIGHT MODE NUCLEAR UI FIX FOR THE MODAL 🚀
             style.innerHTML = `
                 /* Absolute top layer containment */
                 #stellar-wallets-kit-modal-root {
@@ -107,7 +107,6 @@ class StellarWalletsKitAdapter implements WalletAdapter {
                     display: flex !important;
                     align-items: center !important;
                     justify-content: center !important;
-                    pointer-events: none !important;
                 }
 
                 /* Center the Web Component */
@@ -120,7 +119,7 @@ class StellarWalletsKitAdapter implements WalletAdapter {
                     pointer-events: auto !important;
                 }
 
-                /* Dark blur overlay to make the Light Mode app fade out behind it */
+                /* Dark blur overlay */
                 stellar-wallets-modal::part(overlay) {
                     position: fixed !important;
                     top: 0 !important;
@@ -149,7 +148,21 @@ class StellarWalletsKitAdapter implements WalletAdapter {
             document.head.appendChild(style);
         }
 
-        const modules = [new AlbedoModule(), new FreighterModule(), new LobstrModule()];
+        const modules = [
+            new AlbedoModule(),
+            new FreighterModule(),
+            new LobstrModule(),
+            new xBullModule(), // 🚀 FIX: Updated to match correct import
+            new WalletConnectModule({
+                projectId: '39a7791b4ec3d90f2305aabaf5d0c648',
+                metadata: {
+                    name: 'Lux PH Merchant',
+                    description: 'Official Lux PH Merchant Dashboard',
+                    url: window.location.origin,
+                    icons: ['https://stellar.org/favicon.ico']
+                }
+            })
+        ];
 
         if (!this.initialized) {
             StellarWalletsKit.init({
@@ -176,20 +189,17 @@ class StellarWalletsKitAdapter implements WalletAdapter {
             throw new Error('Wallet connection was cancelled or failed.');
         }
 
-        // 🚀 THE WALLET SNIFFER: Extracts the exact app picked in the modal!
         let actualWalletName = 'Secured Wallet';
 
-        // Method A: The kit returned the ID directly in the payload
         if (result.walletId) actualWalletName = result.walletId;
         else if (result.wallet) actualWalletName = result.wallet;
         else if (result.id) actualWalletName = result.id;
         else if (result.name) actualWalletName = result.name;
 
-        // Method B: Fallback to sniffing LocalStorage where SWK saves the session
         if (actualWalletName === 'Secured Wallet') {
             try {
                 const lsWallet = localStorage.getItem('stellarWalletsKit');
-                const lsSwk = localStorage.getItem('swk:active-wallet'); // Newer version key
+                const lsSwk = localStorage.getItem('swk:active-wallet');
 
                 const activeLs = lsSwk || lsWallet;
                 if (activeLs) {
@@ -241,7 +251,7 @@ interface WalletContextType {
     address: string;
     isConnecting: boolean;
     activeAdapterId: string | null;
-    walletName: string; // 🚀 EXPORT THE SNIFFED NAME
+    walletName: string;
     availableAdapters: WalletAdapter[];
     connect: (adapterId?: string | any) => Promise<void>;
     disconnect: () => void;
@@ -260,12 +270,12 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
     const [address, setAddress] = useState<string>('');
     const [isConnecting, setIsConnecting] = useState(false);
     const [activeAdapterId, setActiveAdapterId] = useState<string | null>(null);
-    const [walletName, setWalletName] = useState<string>(''); // 🚀 STATE FOR WALLET NAME
+    const [walletName, setWalletName] = useState<string>('');
 
     useEffect(() => {
         const savedAddress = localStorage.getItem('wallet_address');
         const savedAdapter = localStorage.getItem('wallet_adapter');
-        const savedName = localStorage.getItem('wallet_actual_name'); // Load sniffed name
+        const savedName = localStorage.getItem('wallet_actual_name');
         if (savedAddress && savedAdapter) {
             setAddress(savedAddress);
             setActiveAdapterId(savedAdapter);
@@ -290,16 +300,15 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
                 throw new Error(`${adapter.name} is not installed on this browser.`);
             }
 
-            // 🚀 Extract BOTH the address and the specific name returned by the adapter
             const { address: pubKey, name: actualName } = await adapter.connect(networkKit);
 
             setAddress(pubKey);
             setActiveAdapterId(targetAdapterId);
-            setWalletName(actualName); // Save the precise name to state
+            setWalletName(actualName);
 
             localStorage.setItem('wallet_address', pubKey);
             localStorage.setItem('wallet_adapter', targetAdapterId);
-            localStorage.setItem('wallet_actual_name', actualName); // Save for reloads
+            localStorage.setItem('wallet_actual_name', actualName);
         } catch (error: any) {
             console.error('Wallet connection failed:', error);
             if (error.message && !error.message.includes('cancelled')) {
@@ -334,7 +343,7 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
             address,
             isConnecting,
             activeAdapterId,
-            walletName, // Provide it to the rest of the app!
+            walletName,
             availableAdapters: ADAPTERS,
             connect,
             disconnect,
