@@ -9,32 +9,20 @@ interface LoadingOverlayProps {
 export const LoadingOverlay = ({ isLoading, message = "Processing..." }: LoadingOverlayProps) => {
     if (!isLoading) return null;
 
-    // Create an array of 9 items for our 3x3 block grid
     const blocks = [...Array(9)].map((_, i) => i);
 
-    // Animation variants for the container to stagger the blocks
     const containerVariants = {
         initial: { opacity: 0 },
-        animate: {
-            opacity: 1,
-            transition: {
-                staggerChildren: 0.1,
-            },
-        },
+        animate: { opacity: 1, transition: { staggerChildren: 0.1 } },
         exit: { opacity: 0 },
     };
 
-    // Animation variants for individual blocks
     const blockVariants = {
         initial: { scale: 0.3, opacity: 0.2 },
         animate: {
             scale: [0.3, 1, 0.3],
             opacity: [0.2, 1, 0.2],
-            transition: {
-                repeat: Infinity,
-                duration: 1.2,
-                ease: "easeInOut",
-            },
+            transition: { repeat: Infinity, duration: 1.2, ease: "easeInOut" },
         },
     };
 
@@ -44,34 +32,60 @@ export const LoadingOverlay = ({ isLoading, message = "Processing..." }: Loading
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="absolute inset-0 bg-[#080b14]/80 backdrop-blur-sm z-[999] flex flex-col items-center justify-center overflow-hidden"
+                style={{
+                    position: "fixed",
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: "rgba(255, 255, 255, 0.85)",
+                    backdropFilter: "blur(8px)",
+                    WebkitBackdropFilter: "blur(8px)",
+                    zIndex: 9999,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    overflow: "hidden"
+                }}
             >
-                {/* BLOCK ANIMATION GRID */}
                 <motion.div
                     variants={containerVariants}
                     initial="initial"
                     animate="animate"
-                    className="grid grid-cols-3 gap-2 mb-6"
+                    style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(3, 1fr)",
+                        gap: "8px",
+                        marginBottom: "24px"
+                    }}
                 >
                     {blocks.map((index) => (
                         <motion.div
                             key={index}
                             variants={blockVariants}
-                            className="w-5 h-5 rounded-sm"
                             style={{
-                                // Alternate block colors slightly for a cooler effect
-                                background: index % 2 === 0 ? "#7c3aed" : "#a78bfa",
-                                boxShadow: "0 0 10px rgba(124, 58, 237, 0.4)"
+                                width: "20px",
+                                height: "20px",
+                                borderRadius: "6px",
+                                background: index % 2 === 0 ? "#6366f1" : "#818cf8",
+                                boxShadow: "0 4px 10px rgba(99, 102, 241, 0.3)"
                             }}
                         />
                     ))}
                 </motion.div>
 
-                {/* LOADING MESSAGE */}
                 <motion.div
                     animate={{ opacity: [0.5, 1, 0.5] }}
                     transition={{ repeat: Infinity, duration: 2, ease: "easeInOut" }}
-                    className="text-white font-bold text-sm tracking-widest uppercase font-['DM_Mono',monospace]"
+                    style={{
+                        color: "#1f2937",
+                        fontWeight: 800,
+                        fontSize: "14px",
+                        letterSpacing: "0.1em",
+                        textTransform: "uppercase",
+                        fontFamily: "'DM Mono', monospace"
+                    }}
                 >
                     {message}
                 </motion.div>

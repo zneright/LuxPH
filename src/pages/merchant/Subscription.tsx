@@ -1,13 +1,16 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { auth, db } from "../../config/firebase";
 import { onAuthStateChanged, type User } from "firebase/auth";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { doc, getDoc, updateDoc, collection, getDocs } from "firebase/firestore";
 import { Horizon, TransactionBuilder, Networks, Operation, Asset } from "@stellar/stellar-sdk";
 import { signTransaction } from "@stellar/freighter-api";
 import { AnimatePresence, motion } from "framer-motion";
 import { LoadingOverlay } from "../../components/ui/LoadingOverlay";
 import MonthlyUsageCard from "../../components/dashboard/MonthlyUsageCard";
+import { useWallet } from "../../contexts/WalletContext";
+import { jsPDF } from "jspdf";
+import html2canvas from "html2canvas";
 
 const FALLBACK_TREASURY = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
 const FALLBACK_USDC = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
@@ -16,8 +19,10 @@ export default function Subscription() {
   const navigate = useNavigate();
   const [user, setUser] = useState<User | null>(null);
   const [isSubscribed, setIsSubscribed] = useState<boolean>(false);
-  const [merchantAddress, setMerchantAddress] = useState<string>(false);
+  const [merchantAddress, setMerchantAddress] = useState<string>("");
   const [monthlyUsage, setMonthlyUsage] = useState<number>(0);
+
+  const { signTx, walletName } = useWallet();
 
   const [sysConfig, setSysConfig] = useState({
     proFee: 499,
@@ -134,13 +139,15 @@ export default function Subscription() {
     const fee = sysConfig.proFee;
 
     if (token === "PHPC") {
-      setCryptoAmount(fee.toFixed(2));
+      setCryptoAmount(parseFloat(fee.toString()).toFixed(2));
     } else if (token === "USDC") {
       const usdcToPhp = data['usd-coin'].php;
-      setCryptoAmount((fee / usdcToPhp).toFixed(2));
+      const calc = fee / usdcToPhp;
+      setCryptoAmount(parseFloat(calc.toString()).toFixed(5));
     } else if (token === "XLM") {
       const xlmToPhp = data.stellar.php;
-      setCryptoAmount((fee / xlmToPhp).toFixed(2));
+      const calc = fee / xlmToPhp;
+      setCryptoAmount(parseFloat(calc.toString()).toFixed(5));
     }
   };
 
@@ -152,7 +159,7 @@ export default function Subscription() {
 
   const handleStellarUpgrade = async () => {
     if (!user) return alert("Please login to proceed.");
-    if (!merchantAddress) return alert("Please connect your Freighter wallet in Settings first.");
+    if (!merchantAddress) return alert("Please connect your wallet in Settings first.");
 
     setShowModal(false);
     setIsLoading(true);
@@ -181,21 +188,16 @@ export default function Subscription() {
         .setTimeout(30)
         .build();
 
-      setLoadingMsg(`Awaiting Freighter signature for ${cryptoAmount} ${selectedToken}...`);
+      const displayWalletName = walletName ? (walletName.charAt(0).toUpperCase() + walletName.slice(1)) : "Wallet App";
+      setLoadingMsg(`Awaiting signature from your ${displayWalletName}...`);
 
-      const signResponse = await signTransaction(transaction.toXDR(), {
-        network: sysConfig.networkPassphrase === Networks.TESTNET ? "TESTNET" : "PUBLIC",
-        networkPassphrase: sysConfig.networkPassphrase,
-      });
+      const signedXdrString = await signTx(transaction.toXDR(), sysConfig.networkPassphrase);
 
-      if (!signResponse || signResponse.error) {
-        throw new Error("Payment signature rejected by user.");
+      if (!signedXdrString) {
+        throw new Error("Payment signature rejected or failed.");
       }
 
       setLoadingMsg("Confirming blockchain settlement...");
-
-      const signedXdrString = typeof signResponse === "string" ? signResponse :
-        (signResponse.signedTxXdr || Object.values(signResponse)[0] as string);
 
       const txBody = new URLSearchParams();
       txBody.append("tx", signedXdrString);
@@ -255,17 +257,20 @@ export default function Subscription() {
   return (
     <div style={{ position: "relative", minHeight: "80vh", padding: "4px", boxSizing: "border-box" }}>
       <style>{`
-        .sub-layout-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin-bottom: 20px; }
-        .sub-plan-card { border-radius: 14px; padding: 24px; display: flex; flex-direction: column; justify-content: space-between; }
+        /* ULTRA-CLEAN LIGHT MODE SUBSCRIPTION UI */
+        .sub-layout-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px; margin-bottom: 20px; }
+        .sub-plan-card { border-radius: 24px; padding: 32px; display: flex; flex-direction: column; justify-content: space-between; position: relative; overflow: hidden; }
+        
         .sub-header-block { margin-bottom: 24px; }
-        .sub-header-block h1 { font-size: 30px; font-weight: 800; color: #fff; margin-bottom: 4px; fontFamily: 'Nunito', sans-serif; letter-spacing: -0.02em; }
-        .sub-header-block p { color: #9ca3af; font-size: 13px; margin: 0; }
-        .checkout-modal-overlay { position: fixed; inset: 0; background: rgba(8,11,20,.85); backdrop-filter: blur(4px); zIndex: 100; display: flex; align-items: center; justify-content: center; padding: 20px; }
-        .checkout-modal-box { background: #111625; border: 1px solid rgba(255,255,255,.1); border-radius: 16px; padding: 24px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); width: 100%; max-width: 440px; box-sizing: border-box; }
+        .sub-header-block h1 { font-size: 32px; font-weight: 900; color: #111827; margin-bottom: 4px; fontFamily: 'Nunito', sans-serif; letter-spacing: -0.02em; }
+        .sub-header-block p { color: #6b7280; font-size: 15px; margin: 0; font-weight: 500; }
+        
+        .checkout-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.4); backdrop-filter: blur(8px); z-index: 100; display: flex; align-items: center; justify-content: center; padding: 20px; }
+        .checkout-modal-box { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 24px; padding: 32px; box-shadow: 0 20px 40px rgba(0,0,0,0.1); width: 100%; max-width: 440px; box-sizing: border-box; }
 
         @media (max-width: 768px) {
           .sub-layout-grid { grid-template-columns: 1fr; gap: 16px; }
-          .sub-plan-card { gap: 16px; }
+          .sub-plan-card { padding: 24px; gap: 16px; }
         }
       `}</style>
 
@@ -277,7 +282,7 @@ export default function Subscription() {
         <h1>Subscription</h1>
         <p>
           Currently on the {" "}
-          <span style={{ color: isSubscribed ? "#10b981" : "#a78bfa", fontWeight: "bold" }}>
+          <span style={{ color: isSubscribed ? "#059669" : "#6366f1", fontWeight: "800" }}>
             {isSubscribed ? "Pro Tier" : "Unsubscribed Tier"}
           </span>
         </p>
@@ -289,7 +294,7 @@ export default function Subscription() {
         usageLimit={sysConfig.freeCap}
       />
 
-      <div className="sub-layout-grid" style={{ marginTop: "24px" }}>
+      <div className="sub-layout-grid" style={{ marginTop: "32px" }}>
         {[
           {
             name: "Standard",
@@ -320,26 +325,38 @@ export default function Subscription() {
             ]
           },
         ].map(plan => (
-          <div key={plan.name} className="sub-plan-card" style={{ border: `1px solid ${plan.current ? "rgba(124,58,237,.5)" : "rgba(255,255,255,.08)"}`, background: plan.current ? "rgba(124,58,237,.06)" : "rgba(255,255,255,.04)" }}>
+          <div key={plan.name} className="sub-plan-card" style={{
+            border: `1px solid ${plan.current ? "rgba(16,185,129,0.3)" : "#e5e7eb"}`,
+            background: plan.current ? "#f0fdf4" : "#ffffff",
+            boxShadow: plan.current ? "0 10px 30px rgba(16,185,129,0.1)" : "0 4px 6px rgba(0,0,0,0.02)"
+          }}>
             <div>
-              <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'Nunito',sans-serif", color: "#a78bfa", marginBottom: 6 }}>{plan.name}</div>
-              <div style={{ fontSize: 28, fontWeight: 800, fontFamily: "'Nunito',sans-serif", color: "#fff", marginBottom: 18 }}>{plan.price} <span style={{ fontSize: 14, color: "#9ca3af", fontWeight: 400 }}>{plan.period}</span></div>
-              {plan.features.map(([icon, feat], idx) => (
-                <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: icon === "✓" ? "#e5e7eb" : "#6b7280", marginBottom: 10 }}>
-                  <span style={{ color: icon === "✓" ? "#4ade80" : "#374151" }}>{icon}</span>{feat}
-                </div>
-              ))}
+              <div style={{ fontSize: 24, fontWeight: 900, fontFamily: "'Nunito',sans-serif", color: plan.name === "Pro" ? "#059669" : "#374151", marginBottom: 6 }}>{plan.name}</div>
+              <div style={{ fontSize: 36, fontWeight: 900, fontFamily: "'Nunito',sans-serif", color: "#111827", marginBottom: 24 }}>{plan.price} <span style={{ fontSize: 15, color: "#6b7280", fontWeight: 600 }}>{plan.period}</span></div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                {plan.features.map(([icon, feat], idx) => (
+                  <div key={idx} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, color: icon === "✓" ? "#374151" : "#9ca3af", fontWeight: icon === "✓" ? 600 : 400 }}>
+                    <span style={{
+                      color: icon === "✓" ? "#10b981" : "#d1d5db",
+                      background: icon === "✓" ? "rgba(16,185,129,0.1)" : "transparent",
+                      width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%",
+                      fontSize: 12, fontWeight: 900
+                    }}>{icon}</span>{feat}
+                  </div>
+                ))}
+              </div>
             </div>
 
-            <div style={{ marginTop: 20 }}>
+            <div style={{ marginTop: 32 }}>
               {plan.current ? (
-                <span style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#4ade80", background: "rgba(74,222,128,.1)", border: "1px solid rgba(74,222,128,.25)", padding: "3px 10px", borderRadius: 20 }}>● Active Plan</span>
+                <span style={{ fontSize: 12, fontWeight: 800, fontFamily: "'DM Mono',monospace", color: "#059669", background: "#d1fae5", border: "1px solid #10b981", padding: "6px 14px", borderRadius: 20, textTransform: "uppercase", letterSpacing: "0.05em" }}>● Active Plan</span>
               ) : plan.name === "Standard" ? (
-                <button type="button" onClick={handleDowngrade} style={{ background: "transparent", color: "#ef4444", border: "1px solid rgba(239,68,68,.3)", borderRadius: 8, padding: "9px 18px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "'Nunito',sans-serif", width: "100%" }}>
+                <button type="button" onClick={handleDowngrade} style={{ background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca", borderRadius: 12, padding: "14px 18px", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "'Nunito',sans-serif", width: "100%", transition: "all 0.2s" }}>
                   Unsubscribe (Downgrade)
                 </button>
               ) : (
-                <button type="button" onClick={() => setShowModal(true)} style={{ background: "linear-gradient(135deg,#7c3aed,#6d28d9)", color: "#fff", border: "none", borderRadius: 8, padding: "10px 18px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "'Nunito',sans-serif", width: "100%" }}>
+                <button type="button" onClick={() => setShowModal(true)} style={{ background: "linear-gradient(135deg, #10b981, #059669)", color: "#fff", border: "none", borderRadius: 12, padding: "14px 18px", fontWeight: 800, fontSize: 15, cursor: "pointer", fontFamily: "'Nunito',sans-serif", width: "100%", boxShadow: "0 4px 12px rgba(16,185,129,0.3)" }}>
                   Upgrade to Pro
                 </button>
               )}
@@ -348,48 +365,48 @@ export default function Subscription() {
         ))}
       </div>
 
-      <div style={{ padding: "14px 20px", background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.08)", borderRadius: 10, fontSize: 13, color: "#9ca3af", lineHeight: 1.7 }}>
-        💡 A merchant processing ₱{sysConfig.freeCap.toLocaleString()}/month saves <strong style={{ color: "#a78bfa" }}>₱2,500+</strong> in traditional gateway fees. Pro at ₱{sysConfig.proFee} is a <strong style={{ color: "#fff" }}>5× ROI</strong> the moment you exceed the free tier.
+      <div style={{ padding: "18px 24px", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 16, fontSize: 14, color: "#1e3a8a", lineHeight: 1.7, fontWeight: 500 }}>
+        💡 A merchant processing ₱{sysConfig.freeCap.toLocaleString()}/month saves <strong style={{ color: "#2563eb", fontWeight: 800 }}>₱2,500+</strong> in traditional gateway fees. Pro at ₱{sysConfig.proFee} is a <strong style={{ color: "#1d4ed8", fontWeight: 800 }}>5× ROI</strong> the moment you exceed the free tier.
       </div>
 
       {showModal && (
         <div className="checkout-modal-overlay">
-          <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="checkout-modal-box">
-            <h3 style={{ color: "#fff", fontFamily: "'Nunito', sans-serif", fontSize: 20, fontWeight: 800, margin: "0 0 8px 0" }}>Premium Subscription Checkout</h3>
-            <p style={{ color: "#9ca3af", fontSize: 13, margin: "0 0 20px 0" }}>Select your preferred asset to settle the monthly platform tier fee of <strong>₱{sysConfig.proFee.toFixed(2)} PHP</strong>.</p>
+          <motion.div initial={{ scale: 0.95, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} className="checkout-modal-box">
+            <h3 style={{ color: "#111827", fontFamily: "'Nunito', sans-serif", fontSize: 24, fontWeight: 900, margin: "0 0 8px 0", letterSpacing: "-0.02em" }}>Secure Checkout</h3>
+            <p style={{ color: "#6b7280", fontSize: 14, margin: "0 0 24px 0", lineHeight: 1.5, fontWeight: 500 }}>Select your preferred asset to settle the monthly platform tier fee of <strong style={{ color: "#374151" }}>₱{sysConfig.proFee.toFixed(2)} PHP</strong>.</p>
 
-            <div style={{ marginBottom: 20 }}>
-              <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#6b7280", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>Payment Asset</div>
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#6b7280", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8, fontWeight: 700 }}>Payment Asset</div>
               <select
                 value={selectedToken}
                 onChange={handleTokenChange}
-                style={{ width: "100%", background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 8, padding: "12px 14px", color: "#fff", fontSize: 14, outline: "none", fontWeight: "bold", cursor: "pointer" }}
+                style={{ width: "100%", background: "#f9fafb", border: "1px solid #d1d5db", borderRadius: 12, padding: "16px 14px", color: "#111827", fontSize: 15, outline: "none", fontWeight: 800, cursor: "pointer", fontFamily: "'Nunito',sans-serif" }}
               >
-                <option value="USDC" style={{ color: "#000" }}>USDC (USD Stablecoin)</option>
-                <option value="PHPC" style={{ color: "#000" }}>PHPC (Philippine Stablecoin)</option>
-                <option value="XLM" style={{ color: "#000" }}>XLM (Stellar Lumens)</option>
+                <option value="USDC">USDC (USD Stablecoin)</option>
+                <option value="PHPC">PHPC (Philippine Stablecoin)</option>
+                <option value="XLM">XLM (Stellar Lumens)</option>
               </select>
             </div>
 
-            <div style={{ background: "rgba(124, 58, 237, 0.05)", border: "1px solid rgba(124, 58, 237, 0.15)", borderRadius: 10, padding: 16, marginBottom: 12, textAlign: "center" }}>
-              <div style={{ fontSize: 11, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em", fontFamily: "'DM Mono',monospace" }}>Total Due Equivalent</div>
-              <div style={{ fontSize: 28, fontWeight: 800, color: "#a78bfa", marginTop: 4, fontFamily: "'Nunito',sans-serif" }}>
+            <div style={{ background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 16, padding: 20, marginBottom: 16, textAlign: "center" }}>
+              <div style={{ fontSize: 11, color: "#065f46", textTransform: "uppercase", letterSpacing: "0.05em", fontFamily: "'DM Mono',monospace", fontWeight: 700 }}>Total Due Equivalent</div>
+              <div style={{ fontSize: 32, fontWeight: 900, color: "#059669", marginTop: 4, fontFamily: "'Nunito',sans-serif", letterSpacing: "-1px" }}>
                 {cryptoAmount} {selectedToken}
               </div>
             </div>
 
-            <div style={{ fontSize: 11, color: "#ef4444", textAlign: "center", marginBottom: 20, padding: "0 10px", lineHeight: 1.4 }}>
+            <div style={{ fontSize: 12, color: "#dc2626", textAlign: "center", marginBottom: 24, padding: "0 10px", lineHeight: 1.5, fontWeight: 600 }}>
               * Please note: All subscription payments are strictly non-refundable once authorized and settled on-chain.
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <button type="button" onClick={handleStellarUpgrade} style={{ width: "100%", background: "linear-gradient(135deg,#7c3aed,#4f46e5)", border: "none", color: "#fff", borderRadius: 8, padding: "14px", textAlign: "center", cursor: "pointer", fontWeight: "bold", fontFamily: "'Nunito',sans-serif", fontSize: 14 }}>
-                🚀 Authorize {selectedToken} Transfer
+              <button type="button" onClick={handleStellarUpgrade} style={{ width: "100%", background: "linear-gradient(135deg, #10b981, #059669)", border: "none", color: "#fff", borderRadius: 14, padding: "18px", textAlign: "center", cursor: "pointer", fontWeight: 800, fontFamily: "'Nunito',sans-serif", fontSize: 16, boxShadow: "0 4px 15px rgba(16,185,129,0.3)" }}>
+                🚀 Authorize Transfer
               </button>
             </div>
 
-            <button type="button" onClick={() => setShowModal(false)} style={{ width: "100%", background: "transparent", border: "none", color: "#6b7280", fontSize: 12, marginTop: 16, cursor: "pointer", textDecoration: "underline" }}>
-              Cancel Payment
+            <button type="button" onClick={() => setShowModal(false)} style={{ width: "100%", background: "transparent", border: "none", color: "#6b7280", fontSize: 14, fontWeight: 700, marginTop: 16, cursor: "pointer" }}>
+              Cancel Checkout
             </button>
           </motion.div>
         </div>
@@ -397,4 +414,3 @@ export default function Subscription() {
     </div>
   );
 }
-

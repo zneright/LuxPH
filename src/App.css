@@ -1,3 +1,24 @@
+:root {
+  /* Main Background & Text */
+  background-color: #ffffff;
+  color: #374151;
+
+  /* Accent Colors (Blue/Indigo vibe) */
+  --accent: #4f46e5;
+  --accent-bg: #e0e7ff;
+  --accent-border: #818cf8;
+
+  /* Layout Colors */
+  --border: #e5e7eb;
+  --text-h: #111827;
+  --social-bg: #f3f4f6;
+
+  /* Shadows */
+  --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+/* --- Your original CSS stays exactly the same below! --- */
+
 .counter {
   font-size: 16px;
   padding: 5px 10px;

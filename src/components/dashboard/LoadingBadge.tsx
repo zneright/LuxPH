@@ -1,7 +1,6 @@
 import React, { useMemo } from 'react';
 import { motion } from 'framer-motion';
 
-// 1. Define the TypeScript interfaces for props and styles
 interface LoadingBadgeProps {
     variant?: 'default' | 'network' | 'secure' | 'warning';
     text?: string;
@@ -14,25 +13,23 @@ interface StyleConfig {
     defaultLabel: string;
 }
 
-// 2. Define the static style dictionaries outside the component
+// Light Mode UI Overhaul
 const LOADING_STYLES: Record<string, StyleConfig> = {
-    default: { bg: "rgba(99, 102, 241, 0.15)", bgDim: "rgba(99, 102, 241, 0.05)", text: "#818cf8", defaultLabel: "Processing..." },
-    network: { bg: "rgba(56, 189, 248, 0.15)", bgDim: "rgba(56, 189, 248, 0.05)", text: "#38bdf8", defaultLabel: "Syncing..." },
-    secure: { bg: "rgba(167, 139, 250, 0.15)", bgDim: "rgba(167, 139, 250, 0.05)", text: "#a78bfa", defaultLabel: "Verifying..." },
-    warning: { bg: "rgba(245, 158, 11, 0.15)", bgDim: "rgba(245, 158, 11, 0.05)", text: "#f59e0b", defaultLabel: "Retrying..." },
+    default: { bg: "#e0e7ff", bgDim: "#eef2ff", text: "#4f46e5", defaultLabel: "Processing..." }, // Clean Indigo
+    network: { bg: "#e0f2fe", bgDim: "#f0f9ff", text: "#0284c7", defaultLabel: "Syncing..." }, // Clean Sky
+    secure: { bg: "#f3e8ff", bgDim: "#faf5ff", text: "#7e22ce", defaultLabel: "Verifying..." }, // Clean Purple
+    warning: { bg: "#fef3c7", bgDim: "#fffbeb", text: "#d97706", defaultLabel: "Retrying..." }, // Clean Amber
 };
 
 const FALLBACK_STYLE: StyleConfig = {
-    bg: "rgba(255, 255, 255, 0.15)",
-    bgDim: "rgba(255, 255, 255, 0.05)",
-    text: "#d1d5db",
+    bg: "#f3f4f6",
+    bgDim: "#f9fafb",
+    text: "#4b5563",
     defaultLabel: "Loading..."
 };
 
-// 3. Main component with optimized rendering
 export function LoadingBadge({ variant = 'default', text }: LoadingBadgeProps) {
 
-    // Calculate the active style and display label ONCE per variant/text change
     const { style, displayLabel } = useMemo(() => {
         const activeStyle = LOADING_STYLES[variant] || FALLBACK_STYLE;
         return {
@@ -56,10 +53,10 @@ export function LoadingBadge({ variant = 'default', text }: LoadingBadgeProps) {
                 fontWeight: 700,
                 textTransform: "uppercase",
                 letterSpacing: "0.05em",
-                whiteSpace: "nowrap"
+                whiteSpace: "nowrap",
+                border: `1px solid ${style.bg}`
             }}
         >
-            {/* Micro-Spinner Block */}
             <motion.div
                 animate={{ rotate: 360 }}
                 transition={{ repeat: Infinity, duration: 0.8, ease: "linear" }}
@@ -73,10 +70,8 @@ export function LoadingBadge({ variant = 'default', text }: LoadingBadgeProps) {
                     boxSizing: "border-box"
                 }}
             />
-
-            {/* Text Label Block */}
             <motion.span
-                animate={{ opacity: [0.6, 1, 0.6] }}
+                animate={{ opacity: [0.7, 1, 0.7] }}
                 transition={{ repeat: Infinity, duration: 1.5, ease: "easeInOut" }}
             >
                 {displayLabel}

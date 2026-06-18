@@ -2,34 +2,54 @@ import React, { useState, useEffect } from 'react';
 import { auth, db } from '../../config/firebase';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { useWallet } from '../../contexts/WalletContext';
-import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, getDocs, updateDoc } from 'firebase/firestore';
 import MonthlyUsageCard from "../../components/dashboard/MonthlyUsageCard";
-import InvoiceDashboard from './InvoiceDashboard';
 import { LoadingBadge } from "../../components/dashboard/LoadingBadge";
 import { motion } from "framer-motion";
+import { QRCodeCanvas } from "qrcode.react";
 
 interface MerchantData {
   businessName: string;
   email: string;
-  invoicesGenerated: number;
-  totalRevenue: number;
   stellarPublicKey?: string;
   isSubscribed?: boolean;
-  preferences?: {
-    currency: string;
-    notificationsEnabled: boolean;
-  };
 }
+
+// 🚀 Helper to convert the exact AnimatedLogo SVG into an Image for Canvas
+const generateLuxLogoImage = (): Promise<HTMLImageElement> => {
+  return new Promise((resolve, reject) => {
+    // Note: '#' is encoded as '%23' for the data URI
+    const svg = `
+      <svg width="240" height="240" viewBox="0 0 240 240" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="luxGrad" x1="44" y1="40" x2="196" y2="196" gradientUnits="userSpaceOnUse">
+            <stop stop-color="%2322C55E" />
+            <stop offset="0.55" stop-color="%238B5CF6" />
+            <stop offset="1" stop-color="%233B82F6" />
+          </linearGradient>
+        </defs>
+        <path d="M76 42V134 C76 160 94 178 120 178H186" stroke="url(%23luxGrad)" stroke-width="22" stroke-linecap="round" stroke-linejoin="round" />
+        <rect x="44" y="24" width="64" height="64" rx="20" fill="%2322C55E" />
+        <rect x="154" y="146" width="64" height="64" rx="20" fill="%233B82F6" />
+      </svg>
+    `;
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = `data:image/svg+xml;charset=utf-8,${svg}`;
+  });
+};
 
 export default function Settings() {
   const [user, setUser] = useState<User | null>(null);
   const [merchantData, setMerchantData] = useState<MerchantData | null>(null);
   const [stellarAddress, setStellarAddress] = useState<string>("");
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
 
   const {
     address: walletAddress,
-    activeWallet,
-    activeWalletId,
+    walletName,
     isConnecting,
     connect: connectWalletAdapter,
     disconnect: disconnectWalletAdapter
@@ -38,6 +58,13 @@ export default function Settings() {
   const [monthlyUsage, setMonthlyUsage] = useState<number>(0);
   const [isSubscribed, setIsSubscribed] = useState<boolean>(false);
   const [freeTierLimit, setFreeTierLimit] = useState<number>(100000);
+  const [isGeneratingStandee, setIsGeneratingStandee] = useState(false);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -45,14 +72,11 @@ export default function Settings() {
       if (currentUser) {
         try {
           const configSnap = await getDoc(doc(db, "system_config", "global"));
-          if (configSnap.exists()) {
-            const configData = configSnap.data();
-            if (configData.freeTierMonthlyCap) {
-              setFreeTierLimit(Number(configData.freeTierMonthlyCap));
-            }
+          if (configSnap.exists() && configSnap.data().freeTierMonthlyCap) {
+            setFreeTierLimit(Number(configSnap.data().freeTierMonthlyCap));
           }
         } catch (err) {
-          console.error("Failed to fetch dynamic platform cap limits:", err);
+          console.error("Config fetch error:", err);
         }
 
         const merchantDoc = await getDoc(doc(db, "merchants", currentUser.uid));
@@ -60,16 +84,12 @@ export default function Settings() {
           const data = merchantDoc.data() as MerchantData;
           setMerchantData(data);
           setIsSubscribed(data.isSubscribed === true);
-
-          if (data.stellarPublicKey) {
-            setStellarAddress(data.stellarPublicKey);
-          }
+          if (data.stellarPublicKey) setStellarAddress(data.stellarPublicKey);
         }
 
         try {
           const invoicesRef = collection(db, `merchants/${currentUser.uid}/invoices`);
           const snapshot = await getDocs(invoicesRef);
-
           let currentMonthVolume = 0;
           const now = new Date();
 
@@ -82,10 +102,9 @@ export default function Settings() {
               }
             }
           });
-
           setMonthlyUsage(currentMonthVolume);
         } catch (err) {
-          console.error("Failed to fetch usage data:", err);
+          console.error("Usage fetch error:", err);
         }
       }
     });
@@ -93,235 +112,328 @@ export default function Settings() {
     return () => unsubscribe();
   }, []);
 
-  // BUG FIX: Detect Wallet Changes and WIPE Vault Memory if it changes!
   useEffect(() => {
-    if (user && walletAddress && merchantData) {
-      if (walletAddress !== merchantData.stellarPublicKey) {
-        const syncNewAddress = async () => {
-          try {
-            const userRef = doc(db, "merchants", user.uid);
-            await setDoc(userRef, {
-              stellarPublicKey: walletAddress,
-              encryptedSecretKey: "", // Wipe old vault keys!
-              vaultConfig: { isEnabled: false } // Disable old vault!
-            }, { merge: true });
-
-            setStellarAddress(walletAddress);
-            setMerchantData({ ...merchantData, stellarPublicKey: walletAddress });
-          } catch (error) {
-            console.error("Failed to sync new wallet address:", error);
-          }
-        };
-        syncNewAddress();
-      }
+    if (user && walletAddress && merchantData && walletAddress !== merchantData.stellarPublicKey) {
+      const syncNewAddress = async () => {
+        try {
+          await setDoc(doc(db, "merchants", user.uid), {
+            stellarPublicKey: walletAddress,
+            encryptedSecretKey: "",
+            vaultConfig: { isEnabled: false }
+          }, { merge: true });
+          setStellarAddress(walletAddress);
+          setMerchantData({ ...merchantData, stellarPublicKey: walletAddress });
+        } catch (error) {
+          console.error("Sync error:", error);
+        }
+      };
+      syncNewAddress();
     }
   }, [walletAddress, user, merchantData]);
 
-  const connectWallet = async () => {
-    await connectWalletAdapter('stellar-wallets-kit');
-  };
+  const connectWallet = async () => await connectWalletAdapter('stellar-wallets-kit');
 
   const disconnectWallet = async () => {
     await disconnectWalletAdapter();
     setStellarAddress("");
     if (user) {
-      const userRef = doc(db, "merchants", user.uid);
-      // BUG FIX: Wipe keys on disconnect so the next wallet gets a blank slate
-      await setDoc(userRef, {
-        stellarPublicKey: "",
-        encryptedSecretKey: "",
-        vaultConfig: { isEnabled: false }
-      }, { merge: true });
-
+      await updateDoc(doc(db, "merchants", user.uid), {
+        stellarPublicKey: "", encryptedSecretKey: "", "vaultConfig.isEnabled": false
+      });
       setMerchantData(prev => prev ? { ...prev, stellarPublicKey: "" } : null);
     }
   };
 
   const getWalletDisplayName = () => {
-    const rawName = (activeWallet?.name || activeWalletId || "App").toLowerCase();
+    const rawName = (walletName || "App").toLowerCase();
     if (rawName.includes("lobstr")) return "Lobstr Vault";
     if (rawName.includes("freighter")) return "Freighter";
     if (rawName.includes("xbull")) return "xBull Wallet";
-    if (rawName.includes("albedo")) return "Albedo";
-    return rawName.charAt(0).toUpperCase() + rawName.slice(1) + " App";
+    return rawName.charAt(0).toUpperCase() + rawName.slice(1);
+  };
+
+  const offlineUri = stellarAddress ? `web+stellar:pay?destination=${stellarAddress}&memo=OFFLINE-QR&memo_type=text` : "";
+
+  // 🚀 PURE CANVAS 2D STANDEE GENERATOR WITH NATIVE LUXPH LOGO
+  const handleDownloadStandee = async () => {
+    setIsGeneratingStandee(true);
+    try {
+      const qrCanvas = document.getElementById("hidden-qr-canvas") as HTMLCanvasElement;
+      if (!qrCanvas) throw new Error("QR Canvas missing");
+
+      // Load the exact SVG AnimatedLogo as an image
+      const logoImg = await generateLuxLogoImage();
+
+      const canvas = document.createElement("canvas");
+      canvas.width = 800;
+      canvas.height = 1200; // Standee aspect ratio (2:3)
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Canvas context failed");
+
+      // 1. Clean White Background
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, 800, 1200);
+
+      // 2. Premium Emerald/Blue Header Wave
+      const grad = ctx.createLinearGradient(0, 0, 800, 0);
+      grad.addColorStop(0, "#10b981");
+      grad.addColorStop(1, "#3b82f6");
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(800, 0);
+      ctx.lineTo(800, 240);
+      ctx.quadraticCurveTo(400, 300, 0, 200); // Elegant wave
+      ctx.fill();
+
+      // 3. Draw The Native LuxPH Logo
+      ctx.drawImage(logoImg, 340, 40, 120, 120);
+
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 28px Arial";
+      ctx.textAlign = "center";
+      ctx.fillText("LUX PH", 400, 185);
+
+      // 4. Store Branding
+      ctx.fillStyle = "#111827";
+      ctx.font = "bold 20px monospace";
+      ctx.letterSpacing = "2px";
+      ctx.fillText("OFFICIAL MERCHANT", 400, 320);
+
+      ctx.fillStyle = "#111827";
+      ctx.font = "bold 56px Arial";
+      ctx.letterSpacing = "0px";
+      const bName = merchantData?.businessName || "Store";
+      ctx.fillText(bName.length > 20 ? bName.substring(0, 20) + "..." : bName, 400, 390);
+
+      ctx.fillStyle = "#6b7280";
+      ctx.font = "26px Arial";
+      ctx.fillText("Scan to pay securely via Stellar Network", 400, 440);
+
+      // 5. Draw QR Code Frame & Shadow
+      ctx.shadowColor = "rgba(0,0,0,0.1)";
+      ctx.shadowBlur = 40;
+      ctx.shadowOffsetY = 20;
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.roundRect(160, 520, 480, 480, 40);
+      ctx.fill();
+      ctx.shadowColor = "transparent";
+
+      ctx.strokeStyle = "#f3f4f6";
+      ctx.lineWidth = 4;
+      ctx.stroke();
+
+      // 6. Draw Actual QR
+      ctx.drawImage(qrCanvas, 200, 560, 400, 400);
+
+      // 7. Footer Meta
+      ctx.fillStyle = "#9ca3af";
+      ctx.font = "bold 20px monospace";
+      ctx.letterSpacing = "1px";
+      ctx.fillText("NETWORK REF: OFFLINE-QR", 400, 1100);
+
+      // 8. Trigger Download
+      const link = document.createElement("a");
+      link.download = `LuxPH_Standee_${merchantData?.businessName || "Store"}.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+    } catch (err) {
+      console.error(err);
+      alert("Failed to generate Standee.");
+    } finally {
+      setIsGeneratingStandee(false);
+    }
+  };
+
+  const bentoVariants = {
+    hidden: { opacity: 0 },
+    show: { opacity: 1, transition: { staggerChildren: 0.1 } }
+  };
+
+  const cardVariants = {
+    hidden: { opacity: 0, scale: 0.95, y: 15 },
+    show: { opacity: 1, scale: 1, y: 0, transition: { type: "spring", stiffness: 300, damping: 24 } }
   };
 
   return (
-    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }} style={{ padding: "4px" }}>
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ padding: "16px", maxWidth: 1000, margin: "0 auto", boxSizing: "border-box" }}>
+
+      {/* 🚀 BENTO GRID CSS */}
       <style>{`
-        .st-grid-layout { display: grid; grid-template-columns: 1fr; gap: 20px; }
-        .st-header-block { margin-bottom: 24px; }
-        .st-header-block h1 { fontSize: 30px; fontWeight: 800; color: #fff; margin-bottom: 4px; fontFamily: 'Nunito', sans-serif; letterSpacing: -0.02em; }
-        .st-header-block p { color: #9ca3af; fontSize: 13px; margin: 0; }
-        .st-panel-card { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; }
+        .bento-header { margin-bottom: 24px; padding-left: 8px; }
+        .bento-header h1 { font-size: clamp(28px, 4vw, 36px); font-weight: 900; color: #111827; margin: 0 0 4px 0; font-family: 'Nunito', sans-serif; letter-spacing: -0.02em; }
+        .bento-header p { color: #6b7280; font-size: 15px; margin: 0; font-weight: 500; }
+
+        .bento-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
+        }
         
-        .st-wallet-banner { background: rgba(79, 70, 229, 0.05); border: 1px solid rgba(79, 70, 229, 0.2); border-radius: 12px; padding: 32px 24px; margin-bottom: 30px; display: flex; flex-direction: column; align-items: center; text-align: center; }
-        .st-app-links { display: flex; gap: 12px; margin-top: 20px; justify-content: center; flex-wrap: wrap; }
-        .st-app-link-btn { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #e5e7eb; padding: 10px 16px; border-radius: 8px; fontSize: 12px; text-decoration: none; display: flex; align-items: center; gap: 8px; transition: all 0.2s; fontFamily: 'Nunito', sans-serif; font-weight: 600; }
-        .st-app-link-btn:hover { background: rgba(255,255,255,0.1); transform: translateY(-1px); }
-        
-        .st-card-header { padding: 14px 20px; border-bottom: 1px solid rgba(255,255,255,.06); fontSize: 13px; fontWeight: 600; color: #e5e7eb; }
-        .st-card-body { padding: 20px; flex: 1; display: flex; flex-direction: column; }
-        
-        @media (min-width: 992px) {
-          .st-grid-layout { grid-template-columns: 1fr 1fr; }
+        @media (min-width: 768px) {
+            .bento-grid { grid-template-columns: repeat(2, 1fr); gap: 24px; }
+            .col-span-2 { grid-column: span 2; }
         }
 
-        stellar-wallets-modal,
-        #stellar-wallets-kit-modal-root,
-        [id^="stellar-wallets-modal"] {
-            position: fixed !important;
-            top: 50% !important;
-            left: 50% !important;
-            transform: translate(-50%, -50%) !important;
-            z-index: 2147483647 !important;
-            margin: 0 !important;
-            bottom: auto !important;
-            right: auto !important;
+        .bento-card {
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-radius: 32px;
+            padding: 28px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.02);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            overflow: hidden;
+        }
+        .bento-card:hover {
+            box-shadow: 0 15px 35px -5px rgba(0,0,0,0.06);
+            border-color: #d1d5db;
         }
 
-        stellar-wallets-modal::part(overlay) {
-            position: fixed !important;
-            top: 0 !important;
-            left: 0 !important;
-            width: 100vw !important;
-            height: 100vh !important;
-        }
+        /* Gradient Overlays for aesthetics */
+        .bento-gradient-top { position: absolute; top: 0; left: 0; right: 0; height: 6px; background: linear-gradient(90deg, #3b82f6, #8b5cf6); }
+        .bento-gradient-green { background: linear-gradient(90deg, #10b981, #059669); }
+
+        .bento-title { font-size: 16px; font-weight: 800; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.05em; font-family: 'DM Mono', monospace; margin-bottom: 24px; display: flex; align-items: center; gap: 8px; }
+
+        /* Inputs & Buttons */
+        .bento-input { width: 100%; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 16px; padding: 16px 20px; color: #111827; font-size: 15px; outline: none; font-family: 'DM Mono', monospace; font-weight: 700; transition: border 0.2s; }
+        .bento-input:focus { border-color: #8b5cf6; background: #fff; }
+
+        .bento-btn-primary { background: linear-gradient(135deg, #111827, #374151); color: #fff; border: none; border-radius: 16px; padding: 18px 24px; font-size: 15px; font-weight: 800; cursor: pointer; font-family: 'Nunito', sans-serif; transition: all 0.2s; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 100%; display: flex; justify-content: center; align-items: center; gap: 8px; }
+        .bento-btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,0.2); }
+        .bento-btn-primary:active { transform: scale(0.97); }
+
+        .bento-btn-danger { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; border-radius: 16px; padding: 14px 20px; font-size: 14px; font-weight: 800; cursor: pointer; font-family: 'Nunito', sans-serif; transition: all 0.2s; width: 100%; }
+        .bento-btn-danger:hover { background: #fee2e2; }
+
+        .app-link { background: #f3f4f6; color: #374151; padding: 10px 16px; border-radius: 12px; font-size: 13px; font-weight: 800; text-decoration: none; border: 1px solid #e5e7eb; transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px; }
+        .app-link:hover { background: #e5e7eb; border-color: #d1d5db; }
       `}</style>
 
-      <div className="st-header-block">
-        <h1>App Connection & Settings</h1>
-        <p>Connect your wallet to interact with the Stellar network and manage your profile.</p>
+      {/* Hidden QR for Canvas extraction */}
+      <div style={{ display: "none" }}>
+        <QRCodeCanvas id="hidden-qr-canvas" value={offlineUri} size={400} level="H" />
       </div>
 
-      <div className="st-wallet-banner">
-        {stellarAddress ? (
-          <div style={{ width: "100%", maxWidth: "500px" }}>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", background: "rgba(74,222,128,.1)", border: "1px solid rgba(74,222,128,.2)", borderRadius: 20, marginBottom: 20, fontSize: 13, color: "#86efac", fontWeight: 700 }}>
-              &uarr; Linked Successfully via {getWalletDisplayName()}
-            </div>
-            <div style={{ marginBottom: 20, textAlign: "left" }}>
-              <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>Active Stellar Address</div>
-              <input readOnly value={stellarAddress} style={{ width: "100%", background: "rgba(0,0,0,.3)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 8, padding: "12px 16px", color: "#e5e7eb", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "'DM Mono',monospace", textAlign: "center" }} />
-            </div>
-            <button type="button" onClick={disconnectWallet} style={{ background: "rgba(248,113,113,.1)", color: "#f87171", border: "1px solid rgba(248,113,113,.25)", borderRadius: 8, padding: "10px 24px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'Nunito',sans-serif", transition: "all 0.2s" }}>
-              Disconnect Wallet
-            </button>
+      <div className="bento-header">
+        <h1>Hub & Settings</h1>
+        <p>Your business identity, wallet connections, and physical store tools.</p>
+      </div>
+
+      <motion.div variants={bentoVariants} initial="hidden" animate="show" className="bento-grid">
+
+        {/* 1. PROFILE IDENTITY (Span 1) */}
+        <motion.div variants={cardVariants} className="bento-card">
+          <div className="bento-gradient-top"></div>
+          <div className="bento-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+            Identity
           </div>
-        ) : (
-          <div style={{ width: "100%", maxWidth: "450px" }}>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", background: "rgba(250,204,21,.1)", border: "1px solid rgba(250,204,21,.2)", borderRadius: 20, marginBottom: 16, fontSize: 13, color: "#fde047", fontWeight: 700 }}>
-              &#9888; Secure Connection Required
+
+          <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 24 }}>
+            <div style={{ width: 72, height: 72, borderRadius: 20, background: "linear-gradient(135deg,#8b5cf6,#6366f1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32, fontFamily: "'Nunito',sans-serif", fontWeight: 900, color: "#fff", flexShrink: 0, boxShadow: "0 8px 20px rgba(139,92,246,0.3)" }}>
+              {merchantData?.businessName ? merchantData.businessName.charAt(0).toUpperCase() : (user?.email ? user.email.charAt(0).toUpperCase() : "U")}
             </div>
-            <h2 style={{ color: "#fff", fontSize: 22, fontFamily: "'Nunito',sans-serif", margin: "0 0 12px 0" }}>Link Your Wallet App</h2>
-            <p style={{ fontSize: 14, color: "#9ca3af", marginBottom: 20, lineHeight: 1.5 }}>
-              Click below to automatically launch the connection portal. If you are on mobile, it will route directly to your wallet app.
-            </p>
-
-            <div style={{ background: "rgba(59, 130, 246, 0.08)", border: "1px solid rgba(59, 130, 246, 0.2)", borderRadius: "10px", padding: "14px", marginBottom: "24px", textAlign: "left" }}>
-              <div style={{ fontSize: "13px", color: "#60a5fa", fontWeight: 800, marginBottom: "6px", fontFamily: "'Nunito',sans-serif", display: "flex", alignItems: "center", gap: "6px" }}>
-                &#128453;&#65039; Desktop Browser Setup
+            <div style={{ overflow: "hidden" }}>
+              <div style={{ fontSize: 24, fontWeight: 900, fontFamily: "'Nunito',sans-serif", color: "#111827", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {merchantData?.businessName || "Loading..."}
               </div>
-              <div style={{ fontSize: "13px", color: "#d1d5db", lineHeight: "1.5" }}>
-                If you are on a computer, you <strong>must</strong> have a wallet extension installed (like Lobstr, Freighter, or xBull) before connecting. Make sure it is unlocked!
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={connectWallet}
-              disabled={isConnecting}
-              style={{ background: isConnecting ? "transparent" : "linear-gradient(135deg,#7c3aed,#4f46e5)", color: "#fff", border: isConnecting ? "1px solid rgba(255,255,255,0.1)" : "none", borderRadius: 8, padding: "16px 24px", fontSize: 16, cursor: isConnecting ? "not-allowed" : "pointer", fontFamily: "'Nunito',sans-serif", fontWeight: 800, width: "100%", display: "flex", justifyContent: "center", boxShadow: "0 4px 14px rgba(79, 70, 229, 0.4)" }}
-            >
-              {isConnecting ? <LoadingBadge text="Connecting App..." variant="secure" /> : "Connect & Go to App"}
-            </button>
-
-            <div style={{ marginTop: 24, paddingTop: 20, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
-              <p style={{ fontSize: 12, color: "#6b7280", margin: 0 }}>Don't have a wallet extension yet? Get one here:</p>
-              <div className="st-app-links">
-                <a href="https://lobstr.co/" target="_blank" rel="noreferrer" className="st-app-link-btn">
-                  &#129406; Get Lobstr
-                </a>
-                <a href="https://freighter.app/" target="_blank" rel="noreferrer" className="st-app-link-btn">
-                  &#128674; Get Freighter
-                </a>
+              <div style={{ fontSize: 14, color: "#6b7280", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {merchantData?.email || user?.email}
               </div>
             </div>
           </div>
+
+          <div style={{ marginTop: "auto" }}>
+            <input type="email" readOnly value={merchantData?.email || user?.email || ""} className="bento-input" style={{ color: "#6b7280", background: "#f3f4f6" }} />
+          </div>
+        </motion.div>
+
+        {/* 2. WALLET CONNECTION (Span 1) */}
+        <motion.div variants={cardVariants} className="bento-card">
+          <div className="bento-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
+            Blockchain Link
+          </div>
+
+          {stellarAddress ? (
+            <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+              <div style={{ display: "inline-flex", alignSelf: "flex-start", alignItems: "center", gap: 8, padding: "8px 16px", background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 99, marginBottom: 20, fontSize: 13, color: "#065f46", fontWeight: 800 }}>
+                ✓ Linked via {getWalletDisplayName()}
+              </div>
+              <input readOnly value={stellarAddress} className="bento-input" style={{ marginBottom: "auto" }} />
+              <div style={{ marginTop: 24 }}>
+                <button onClick={disconnectWallet} className="bento-btn-danger">Disconnect Wallet</button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+              <h2 style={{ fontSize: 22, fontWeight: 900, color: "#111827", margin: "0 0 8px 0", fontFamily: "'Nunito', sans-serif" }}>App Required</h2>
+              <p style={{ fontSize: 14, color: "#6b7280", margin: "0 0 24px 0", lineHeight: 1.5 }}>Link your wallet to generate physical QRs and interact with the ledger.</p>
+              <button onClick={connectWallet} disabled={isConnecting} className="bento-btn-primary" style={{ marginBottom: 20, background: isConnecting ? "#e5e7eb" : undefined, color: isConnecting ? "#9ca3af" : undefined, boxShadow: isConnecting ? "none" : undefined }}>
+                {isConnecting ? <LoadingBadge text="Connecting..." variant="secure" /> : "Connect Wallet App"}
+              </button>
+
+              <div style={{ marginTop: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <a href="https://lobstr.co/" target="_blank" rel="noreferrer" className="app-link">🦀 Lobstr</a>
+                <a href="https://freighter.app/" target="_blank" rel="noreferrer" className="app-link">⚓ Freighter</a>
+              </div>
+            </div>
+          )}
+        </motion.div>
+
+        {/* 3. MONTHLY USAGE (Full Width) */}
+        <motion.div variants={cardVariants} className="col-span-2">
+          <MonthlyUsageCard monthlyUsage={monthlyUsage} isSubscribed={isSubscribed} usageLimit={freeTierLimit} />
+        </motion.div>
+
+        {/* 4. OFFLINE STANDEE STUDIO (Full Width) */}
+        {stellarAddress && (
+          <motion.div variants={cardVariants} className="bento-card col-span-2" style={{ background: "linear-gradient(135deg, #f8fafc, #f1f5f9)", border: "1px solid #cbd5e1" }}>
+            <div className="bento-gradient-top bento-gradient-green"></div>
+
+            <div className="bento-title" style={{ color: "#0f172a" }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><rect x="7" y="7" width="3" height="3"></rect><rect x="14" y="7" width="3" height="3"></rect><rect x="7" y="14" width="3" height="3"></rect><rect x="14" y="14" width="3" height="3"></rect></svg>
+              Physical Store Tools
+            </div>
+
+            <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 32, alignItems: "center" }}>
+
+              <div style={{ flex: 1 }}>
+                <h2 style={{ fontSize: "clamp(24px, 4vw, 32px)", fontWeight: 900, color: "#0f172a", margin: "0 0 12px 0", fontFamily: "'Nunito',sans-serif", lineHeight: 1.1, letterSpacing: "-0.02em" }}>
+                  Printable Pay Standee
+                </h2>
+                <p style={{ fontSize: 15, color: "#475569", lineHeight: 1.6, marginBottom: 24, fontWeight: 500 }}>
+                  Generate an ultra-high resolution, print-ready QR standee. Scanning this automatically injects an <strong>OFFLINE-QR</strong> tracking tag into the blockchain so you can track in-store sales on your ledger.
+                </p>
+                <button onClick={handleDownloadStandee} disabled={isGeneratingStandee} className="bento-btn-primary" style={{ background: "linear-gradient(135deg, #10b981, #059669)", width: isMobile ? "100%" : "max-content", padding: "16px 32px" }}>
+                  {isGeneratingStandee ? "Rendering Canvas..." : (
+                    <>
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                      Download Print-Ready PNG
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Interactive Preview Box */}
+              <div style={{ width: 220, background: "#fff", padding: 16, borderRadius: 24, boxShadow: "0 20px 40px -10px rgba(0,0,0,0.1)", border: "4px solid #fff", position: "relative", transform: "rotate(2deg)" }}>
+                <div style={{ background: "linear-gradient(135deg, #10b981, #3b82f6)", height: 60, borderRadius: 12, marginBottom: 12 }} />
+                <div style={{ width: "100%", aspectRatio: "1/1", background: "#f8fafc", borderRadius: 12, border: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <QRCodeCanvas value={offlineUri} size={140} level="H" fgColor="#0f172a" />
+                </div>
+                <div style={{ height: 12, background: "#f1f5f9", borderRadius: 4, width: "60%", margin: "16px auto 0" }} />
+              </div>
+
+            </div>
+          </motion.div>
         )}
-      </div>
 
-      <MonthlyUsageCard
-        monthlyUsage={monthlyUsage}
-        isSubscribed={isSubscribed}
-        usageLimit={freeTierLimit}
-      />
-
-      <div className="st-header-block" style={{ marginTop: 40 }}>
-        <h1>Profile Settings</h1>
-        <p>Manage your business profile and preferences.</p>
-      </div>
-
-      <div className="st-grid-layout">
-        <div className="st-panel-card">
-          <div className="st-card-header">Account Profile</div>
-          <div className="st-card-body">
-            <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 22 }}>
-              <div style={{ width: 56, height: 56, borderRadius: 12, background: "linear-gradient(135deg,#7c3aed,#4f46e5)", display: "flex", alignItems: "center", justifyItems: "center", justifyContent: "center", fontSize: 24, fontFamily: "'Nunito',sans-serif", fontWeight: 800, color: "#fff", flexShrink: 0 }}>
-                {merchantData?.businessName ? merchantData.businessName.charAt(0).toUpperCase() : (user?.email ? user.email.charAt(0).toUpperCase() : "U")}
-              </div>
-              <div style={{ overflow: "hidden" }}>
-                <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'Nunito',sans-serif", color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {merchantData?.businessName || "Loading..."}
-                </div>
-                <div style={{ fontSize: 12, color: "#6b7280", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {merchantData?.email || user?.email || "Loading..."}
-                </div>
-              </div>
-            </div>
-
-            <div style={{ marginBottom: 14 }}>
-              <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#6b7280", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Email Address</div>
-              <input type="email" readOnly value={merchantData?.email || user?.email || ""} style={{ width: "100%", background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 8, padding: "10px 13px", color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "'Nunito',sans-serif" }} />
-            </div>
-          </div>
-        </div>
-
-        {merchantData?.preferences && (
-          <div className="st-panel-card">
-            <div className="st-card-header">Preferences & Stats</div>
-            <div className="st-card-body">
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-                <div>
-                  <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#6b7280", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Currency</div>
-                  <div style={{ width: "100%", background: "rgba(255,255,255,.02)", border: "1px solid rgba(255,255,255,.05)", borderRadius: 8, padding: "10px 13px", color: "#fff", fontSize: 13, fontFamily: "'DM Mono',monospace", boxSizing: "border-box" }}>
-                    {merchantData.preferences.currency}
-                  </div>
-                </div>
-                <div>
-                  <div style={{ fontSize: 10, fontFamily: "'DM Mono',monospace", color: "#6b7280", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Invoices</div>
-                  <div style={{ width: "100%", background: "rgba(255,255,255,.02)", border: "1px solid rgba(255,255,255,.05)", borderRadius: 8, padding: "10px 13px", color: "#fff", fontSize: 13, fontFamily: "'DM Mono',monospace", boxSizing: "border-box" }}>
-                    {merchantData.invoicesGenerated}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {stellarAddress && user && (
-        <div style={{ marginTop: 32 }}>
-          <div className="st-header-block">
-            <h1>Invoicing Engine</h1>
-            <p>Generate and manage your ledger-anchored invoices directly.</p>
-          </div>
-          <InvoiceDashboard
-            userUid={user.uid}
-            stellarAddress={stellarAddress}
-          />
-        </div>
-      )}
+      </motion.div>
     </motion.div>
   );
 }

@@ -1,7 +1,6 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Scanner } from "@yudiel/react-qr-scanner";
 import { Horizon, TransactionBuilder, Networks, Operation, Asset, Memo } from "@stellar/stellar-sdk";
-import { signTransaction } from "@stellar/freighter-api";
 import { auth, db } from "../../config/firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, setDoc, collection, getDocs } from "firebase/firestore";
@@ -9,39 +8,11 @@ import { AnimatePresence, motion } from "framer-motion";
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 
+import { useWallet } from "../../contexts/WalletContext";
 import { LoadingOverlay } from "../../components/ui/LoadingOverlay";
 import MonthlyUsageCard from "../../components/dashboard/MonthlyUsageCard";
 
 const FALLBACK_ISSUER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
-
-const FloatingNode = ({ delay = 0, x, y, size = 1, color = "#f59e0b", blur = 0 }: { delay?: number, x: string, y: string, size?: number, color?: string, blur?: number }) => {
-    const { randomDuration, randomDelay } = useMemo(() => ({
-        randomDuration: 5 + Math.random() * 5,
-        randomDelay: delay + Math.random() * 2
-    }), [delay]);
-
-    return (
-        <motion.div
-            className="absolute rounded-full z-0 pointer-events-none"
-            style={{
-                left: x,
-                top: y,
-                width: 2 * size,
-                height: 2 * size,
-                background: color,
-                filter: `blur(${blur}px)`,
-                boxShadow: `0 0 ${size * 4}px ${size}px ${color}80`
-            }}
-            animate={{
-                opacity: [0.1, 0.5, 0.1],
-                scale: [1, 1.4, 1],
-                y: ["0%", "-40%", "0%"],
-                x: ["0%", "15%", "0%"]
-            }}
-            transition={{ duration: randomDuration, delay: randomDelay, repeat: Infinity, ease: "easeInOut" }}
-        />
-    );
-};
 
 export default function SendPayment() {
     const [sysConfig, setSysConfig] = useState({
@@ -54,15 +25,15 @@ export default function SendPayment() {
 
     const [destination, setDestination] = useState("");
     const [amount, setAmount] = useState("");
-    const [description, setDescription] = useState("Paying Supplier");
-    const [token, setToken] = useState<"XLM" | "PHPC" | "USDC">("USDC");
+    const [description, setDescription] = useState("");
+    // 🚀 Start with XLM by default
+    const [token, setToken] = useState<"XLM" | "PHPC" | "USDC">("XLM");
 
     const [isScanning, setIsScanning] = useState(false);
     const [txHash, setTxHash] = useState("");
     const [receiptDate, setReceiptDate] = useState("");
     const [merchantAddress, setMerchantAddress] = useState("");
 
-    // --- BALANCE STATE ---
     const [balance, setBalance] = useState("0.00");
     const [isBalanceHidden, setIsBalanceHidden] = useState(true);
 
@@ -77,8 +48,11 @@ export default function SendPayment() {
     const [isSubscribed, setIsSubscribed] = useState(false);
 
     const [isLoading, setIsLoading] = useState(true);
+    const [isSending, setIsSending] = useState(false);
     const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
     const [loadingMsg, setLoadingMsg] = useState("Initializing dashboard...");
+
+    const { signTx, walletName } = useWallet();
 
     useEffect(() => {
         const initSystem = async () => {
@@ -140,7 +114,6 @@ export default function SendPayment() {
         initSystem();
     }, []);
 
-    // Fetch Balance
     useEffect(() => {
         if (!merchantAddress) return;
         const fetchBalance = async () => {
@@ -208,9 +181,13 @@ export default function SendPayment() {
 
                 setRealTimeRate(rate);
 
-                const parsedFiat = parseFloat(amountInFiat);
-                if (!isNaN(parsedFiat)) {
-                    setAmount((parsedFiat / rate).toFixed(2));
+                if (amountInFiat) {
+                    const parsedFiat = parseFloat(amountInFiat);
+                    if (!isNaN(parsedFiat)) {
+                        let newCrypto = (parsedFiat / rate).toFixed(5);
+                        newCrypto = parseFloat(newCrypto).toString();
+                        setAmount(newCrypto);
+                    }
                 }
             } catch (e) {
                 console.error(e);
@@ -218,17 +195,37 @@ export default function SendPayment() {
         };
         fetchRate();
         return () => { isMounted = false; };
-    }, [amountInFiat, token, fiatCurrency]);
+    }, [token, fiatCurrency]);
 
     const handleCryptoAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const newCryptoAmount = e.target.value;
-        setAmount(newCryptoAmount);
+        const val = e.target.value;
+        setAmount(val);
 
-        const parsedCrypto = parseFloat(newCryptoAmount);
-        if (!isNaN(parsedCrypto)) {
-            setAmountInFiat((parsedCrypto * realTimeRate).toFixed(2));
-        } else {
+        if (val === "") {
             setAmountInFiat("");
+            return;
+        }
+
+        const parsed = parseFloat(val);
+        if (!isNaN(parsed)) {
+            setAmountInFiat((parsed * realTimeRate).toFixed(2));
+        }
+    };
+
+    const handleFiatAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const val = e.target.value;
+        setAmountInFiat(val);
+
+        if (val === "") {
+            setAmount("");
+            return;
+        }
+
+        const parsed = parseFloat(val);
+        if (!isNaN(parsed)) {
+            let newCrypto = (parsed / realTimeRate).toFixed(5);
+            newCrypto = parseFloat(newCrypto).toString();
+            setAmount(newCrypto);
         }
     };
 
@@ -249,7 +246,7 @@ export default function SendPayment() {
             return;
         }
 
-        if (confirm(`Do you want to send ${amount} ${token} to ${address.substring(0, 8)}...?`)) {
+        if (amount && confirm(`Do you want to send ${amount} ${token} to ${address.substring(0, 8)}...?`)) {
             await executePayment(address);
         }
     };
@@ -273,7 +270,7 @@ export default function SendPayment() {
                 amountFiat: amountInFiat,
                 fiatCurrency: fiatCurrency,
                 token: token,
-                description: description,
+                description: description || "Payment Sent",
                 txHash: hash,
                 status: status === "success" ? "COMPLETED" : status,
                 errorMessage: errorMessage,
@@ -297,8 +294,10 @@ export default function SendPayment() {
         const memoString = `OUT-${Date.now().toString().slice(-6)}`;
         let paymentLogged = false;
 
-        setIsLoading(true);
-        setLoadingMsg("Awaiting Wallet Signature...");
+        setIsSending(true);
+        const displayWalletName = walletName ? (walletName.charAt(0).toUpperCase() + walletName.slice(1)) : "Wallet App";
+        setLoadingMsg(`Awaiting signature from your ${displayWalletName}...`);
+
         setTxHash("");
         setSpeeds({ network: "0.00", total: "0.00" });
 
@@ -326,22 +325,16 @@ export default function SendPayment() {
                 .setTimeout(30)
                 .build();
 
-            const signResponse = await signTransaction(transaction.toXDR(), {
-                network: sysConfig.networkPassphrase === Networks.TESTNET ? "TESTNET" : "PUBLIC",
-                networkPassphrase: sysConfig.networkPassphrase,
-            });
+            const signedXdrString = await signTx(transaction.toXDR(), sysConfig.networkPassphrase);
 
-            if (!signResponse || signResponse.error) {
+            if (!signedXdrString) {
                 paymentLogged = true;
                 const totalSpeed = ((Date.now() - startTime) / 1000).toFixed(2);
                 await savePaymentToFirestore(paymentId, "cancelled", "", "0.00", totalSpeed, "Transaction signing cancelled.");
                 throw new Error("Transaction signing cancelled.");
             }
 
-            const signedXdrString = typeof signResponse === "string" ? signResponse :
-                (signResponse.signedTxXdr || Object.values(signResponse)[0] as string);
-
-            setLoadingMsg("Submitting to the Stellar Network...");
+            setLoadingMsg("Transmitting to the Stellar Network...");
 
             const txBody = new URLSearchParams();
             txBody.append("tx", signedXdrString);
@@ -388,8 +381,11 @@ export default function SendPayment() {
             paymentLogged = true;
             await savePaymentToFirestore(paymentId, "success", hash, netSpeed, totalSpeed);
 
-            setTxHash(hash);
-            setReceiptDate(new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }));
+            setTimeout(() => {
+                setTxHash(hash);
+                setReceiptDate(new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }));
+                setIsSending(false);
+            }, 800);
 
             if (auth.currentUser) {
                 await fetchUsage(auth.currentUser.uid);
@@ -397,13 +393,12 @@ export default function SendPayment() {
 
         } catch (error: any) {
             console.error(error);
+            setIsSending(false);
             if (!paymentLogged) {
                 const totalSpeed = ((Date.now() - startTime) / 1000).toFixed(2);
                 await savePaymentToFirestore(paymentId, "failed", "", "0.00", totalSpeed, error.message || "Unknown error occurred.");
             }
             alert(error.message || "Payment Failed.");
-        } finally {
-            setIsLoading(false);
         }
     };
 
@@ -439,7 +434,11 @@ export default function SendPayment() {
     const resetPayment = () => {
         setTxHash("");
         setDestination("");
-        setDescription("Paying Supplier");
+        setAmount("");
+        setAmountInFiat("");
+        setDescription("");
+        setIsSending(false);
+        setIsScanning(false);
     };
 
     const isTestnet = sysConfig.networkPassphrase === Networks.TESTNET;
@@ -448,324 +447,398 @@ export default function SendPayment() {
     return (
         <div style={{ position: "relative", minHeight: "100vh", zIndex: 1, paddingBottom: 60, boxSizing: "border-box" }}>
             <style>{`
-                .pm-layout-split { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; align-items: start; }
-                .pm-dual-fields { display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px; align-items: end; margin-bottom: 20px; }
-                .pm-card-left { backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,.06); border-radius: 24px; padding: 32px; position: relative; overflow: hidden; }
-                .pm-card-right { backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,.06); border-radius: 24px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px; position: relative; overflow: hidden; min-height: 400px; box-sizing: border-box; }
-                .pm-scanner-box { width: 100%; max-width: 300px; border-radius: 20px; overflow: hidden; border: 2px solid #60a5fa; box-shadow: 0 0 30px rgba(96,165,250,0.3); }
-                .receipt-action-buttons { display: flex; gap: 12px; width: 100%; margin-top: 16px; }
+                /* ULTRA-CLEAN TOKEN-FIRST PREMIUM UI (Centered Layout) */
+                .header-title { font-size: 32px; font-weight: 900; font-family: 'Nunito',sans-serif; color: #111827; margin: 0; letter-spacing: -0.02em; }
+                
+                .pm-layout-centered { display: flex; flex-direction: column; align-items: center; justify-content: center; max-width: 520px; margin: 0 auto; width: 100%; }
 
-                @media (max-width: 992px) {
-                    .pm-layout-split { grid-template-columns: 1fr; gap: 24px; }
+                /* Premium Card Styles */
+                .premium-input-card { position: relative; border-radius: 36px; padding: 40px 30px; width: 100%; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; z-index: 1; transition: all 0.5s ease; }
+                .premium-input-card.standard { background: #ffffff; border: 1px solid #e5e7eb; box-shadow: 0 10px 30px -5px rgba(0,0,0,0.05); }
+                .premium-input-card.pro-active { background: #ffffff; border: none; box-shadow: 0 20px 40px -10px rgba(245,158,11,0.15); }
+                
+                .terminal-card { position: relative; border-radius: 36px; display: flex; flex-direction: column; align-items: center; padding: 40px 30px; width: 100%; box-sizing: border-box; z-index: 1; transition: all 0.5s ease; min-height: 400px; justify-content: center; }
+                .terminal-card.standard { background: #ffffff; border: 1px solid #e5e7eb; box-shadow: 0 10px 30px -5px rgba(0,0,0,0.05); }
+                .terminal-card.pro-active { background: #ffffff; border: none; box-shadow: 0 20px 40px -10px rgba(16,185,129,0.15); }
+
+                /* 🚀 NEW: Send-Specific Pro Aura (Flows UPWARD to simulate sending) */
+                .send-aura-bg { position: absolute; inset: -4px; border-radius: 40px; background: linear-gradient(180deg, #10b981, #34d399, #fcd34d, #10b981, #34d399); background-size: 100% 300%; animation: sendDataFlow 4s linear infinite; z-index: -2; filter: blur(12px); opacity: 0.7; }
+                .pro-card-body { position: absolute; inset: 0; background: #ffffff; border-radius: 36px; z-index: -1; }
+                .pro-badge { background: linear-gradient(90deg, #d97706, #059669); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 900; font-size: 13px; letter-spacing: 2px; text-transform: uppercase; position: absolute; top: 26px; right: 26px; font-family: 'DM Mono',monospace; opacity: 0.9; }
+
+                @keyframes sendDataFlow { 0% { background-position: 0% 100%; } 100% { background-position: 0% 0%; } }
+
+                /* 🚀 SLEEK WALLET-STYLE BALANCE PILL WIDGET */
+                .balance-pill { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 10px 14px 10px 10px; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 100px; cursor: pointer; transition: all 0.3s ease; box-shadow: 0 4px 10px rgba(0,0,0,0.04); user-select: none; }
+                .balance-pill:hover { background: #f9fafb; transform: translateY(-2px); box-shadow: 0 6px 15px rgba(0,0,0,0.06); }
+                .balance-pill.pro-active { background: linear-gradient(135deg, #fffbeb, #fef3c7); border-color: #fde68a; box-shadow: 0 4px 15px rgba(245,158,11,0.1); }
+                .balance-pill.pro-active:hover { box-shadow: 0 6px 20px rgba(245,158,11,0.15); }
+                
+                .balance-pill-left { display: flex; align-items: center; gap: 10px; }
+                .balance-icon { width: 32px; height: 32px; border-radius: 50%; background: #f3f4f6; display: flex; align-items: center; justify-content: center; font-size: 16px; border: 1px solid #e5e7eb; }
+                .balance-pill.pro-active .balance-icon { background: #fcd34d; border-color: #f59e0b; color: #b45309; }
+                .balance-label { color: #6b7280; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+                .balance-pill.pro-active .balance-label { color: #d97706; }
+                
+                .balance-amount { color: #111827; font-size: 16px; font-weight: 900; font-family: 'DM Mono',monospace; letter-spacing: -0.5px; display: flex; align-items: center; gap: 8px; }
+                .balance-amount.pro-text { color: #b45309; }
+
+                /* Inputs */
+                .clean-input { width: 100%; background: transparent; border: none; border-bottom: 2px solid #e5e7eb; padding: 16px 8px; color: #111827; font-size: 16px; font-weight: 600; outline: none; box-sizing: border-box; transition: all 0.3s; text-align: center; margin-bottom: 24px; font-family: 'Nunito',sans-serif; }
+                .clean-input:focus { border-bottom-color: #3b82f6; }
+                .clean-input.pro-active:focus { border-bottom-color: #10b981; }
+                .clean-input::placeholder { color: #9ca3af; font-weight: 500; }
+
+                /* 🚀 NEW: Premium Camera Button nested inside Address Input */
+                .dest-input-container { width: 100%; position: relative; margin-bottom: 32px; }
+                .dest-scan-btn { 
+                    position: absolute; right: 4px; top: 12px; background: #f3f4f6; color: #9ca3af; 
+                    border: 1px solid #e5e7eb; border-radius: 12px; padding: 8px 10px; cursor: pointer; 
+                    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); display: flex; align-items: center; justify-content: center;
                 }
+                .dest-scan-btn:hover { background: #e5e7eb; color: #3b82f6; transform: translateY(-2px); box-shadow: 0 4px 10px rgba(0,0,0,0.05); border-color: #d1d5db; }
+                .dest-scan-btn.pro-active:hover { color: #10b981; }
+
+                /* Token Selectors */
+                .primary-token-badge { background: #f3f4f6; padding: 10px 24px; border-radius: 30px; display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 24px; transition: all 0.2s; border: 1px solid #e5e7eb; }
+                .primary-token-badge:hover { background: #e5e7eb; }
+                .primary-token-badge.pro-active { background: #fef3c7; border-color: #fde68a; }
+                .primary-token-select { background: transparent; color: #111827; border: none; font-size: 18px; font-weight: 900; outline: none; cursor: pointer; appearance: none; font-family: 'Nunito',sans-serif; letter-spacing: 0.5px; }
+                .primary-token-select.pro-text { color: #b45309; }
+                
+                .massive-naked-input { background: transparent; border: none; color: #111827; font-size: 80px; font-weight: 900; text-align: center; outline: none; font-family: 'Nunito',sans-serif; width: 100%; margin-bottom: 12px; letter-spacing: -3px; line-height: 1; transition: color 0.3s; }
+                .massive-naked-input.pro-text { color: #d97706; }
+                .massive-naked-input::-webkit-outer-spin-button, .massive-naked-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+                .massive-naked-input[type=number] { -moz-appearance: textfield; }
+                .massive-naked-input::placeholder { color: rgba(0,0,0,0.1); }
+
+                .fiat-preview-row { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 0 auto 36px auto; color: #6b7280; font-size: 18px; font-weight: 700; }
+                .naked-fiat-input { background: transparent; border: none; color: #4b5563; font-size: 18px; font-weight: 700; text-align: left; outline: none; font-family: 'Nunito',sans-serif; max-width: 120px; transition: color 0.3s; }
+                .naked-fiat-input:focus { color: #111827; }
+                .naked-fiat-select { background: transparent; color: #6b7280; border: none; font-size: 18px; font-weight: 800; outline: none; cursor: pointer; appearance: none; font-family: 'Nunito',sans-serif; }
+
+                /* Big Premium Button */
+                .premium-btn { width: 100%; color: #fff; border: none; border-radius: 24px; padding: 22px 16px; font-weight: 800; font-size: 18px; cursor: pointer; font-family: 'Nunito',sans-serif; transition: transform 0.1s, opacity 0.2s; box-shadow: 0 10px 25px -5px rgba(59,130,246,0.4); position: relative; overflow: hidden; background: #3b82f6; }
+                .premium-btn.pro-active { background: linear-gradient(135deg, #10b981, #059669); box-shadow: 0 10px 25px -5px rgba(16,185,129,0.4); }
+                .premium-btn:active { transform: scale(0.97); }
+                .premium-btn:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
+
+                /* 🚀 NEW: The QR Scanning Laser Animation */
+                .qr-clean-frame { position: relative; overflow: hidden; background: #ffffff; padding: 0; border-radius: 28px; display: flex; align-items: center; justify-content: center; box-shadow: 0 15px 35px rgba(0,0,0,0.08); margin-bottom: 24px; width: 100%; max-width: 300px; aspect-ratio: 1/1; border: 2px solid #f3f4f6; }
+                .scanner-laser { position: absolute; left: 0; width: 100%; height: 3px; background: #3b82f6; box-shadow: 0 0 15px 4px rgba(59,130,246,0.6); z-index: 10; animation: scanLaser 2s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+                .scanner-laser.pro-active { background: #10b981; box-shadow: 0 0 15px 4px rgba(16,185,129,0.6); }
+
+                @keyframes scanLaser { 0% { top: 0%; opacity: 0; } 15% { opacity: 1; } 85% { opacity: 1; } 100% { top: 100%; opacity: 0; } }
+
+                /* 🚀 NEW: Outgoing Sending Pulse Animation (With upward arrow) */
+                .confirm-ring-container { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 240px; margin-bottom: 24px; position: relative; }
+                
+                .outgoing-pulse-ring { width: 80px; height: 80px; border-radius: 50%; background: rgba(59,130,246,0.1); border: 3px solid #3b82f6; animation: outgoingPulse 1.5s cubic-bezier(0.2, 0.8, 0.2, 1) infinite; position: absolute; top: 50%; left: 50%; margin-top: -64px; margin-left: -40px; }
+                .outgoing-pulse-ring.pro-active { background: rgba(16,185,129,0.1); border-color: #10b981; }
+
+                .outgoing-pulse-core { width: 44px; height: 44px; border-radius: 50%; background: #3b82f6; box-shadow: 0 0 20px rgba(59,130,246,0.6); position: absolute; top: 50%; left: 50%; margin-top: -46px; margin-left: -22px; display: flex; align-items: center; justify-content: center; z-index: 2; }
+                .outgoing-pulse-core.pro-active { background: #10b981; box-shadow: 0 0 20px rgba(16,185,129,0.6); }
+
+                @keyframes outgoingPulse { 0% { transform: scale(0.5); opacity: 1; border-width: 6px; } 100% { transform: scale(2.5); opacity: 0; border-width: 1px; } }
+                @keyframes flyUp { 0% { transform: translateY(6px); opacity: 0; } 50% { transform: translateY(0px); opacity: 1; } 100% { transform: translateY(-6px); opacity: 0; } }
+
+                /* Clean Receipt */
+                .clean-receipt { background: #ffffff; border-radius: 24px; padding: 40px 32px; width: 100%; position: relative; box-shadow: 0 20px 50px rgba(0,0,0,0.08); border: 1px solid #e5e7eb; }
+                .receipt-action-buttons { display: flex; gap: 12px; width: 100%; margin-top: 20px; }
+
                 @media (max-width: 576px) {
-                    .pm-dual-fields { grid-template-columns: 1fr; gap: 12px; align-items: stretch; }
-                    .pm-dual-fields > div:nth-child(2) { display: none !important; }
-                    .pm-card-left, .pm-card-right { padding: 20px; min-height: auto; }
-                    .receipt-action-buttons { flex-direction: column; }
+                  .massive-naked-input { font-size: 64px; }
+                  .premium-input-card, .terminal-card { padding: 32px 20px; border-radius: 32px; }
+                  .qr-clean-frame { max-width: 240px; }
+                  .receipt-action-buttons { flex-direction: column; }
+                  .premium-btn { padding: 20px; font-size: 16px; border-radius: 20px; }
+                  .clean-receipt { padding: 24px 20px; border-radius: 20px; }
                 }
             `}</style>
 
-            {isSubscribed && (
-                <motion.div
-                    style={{
-                        position: "absolute",
-                        top: "5%",
-                        left: "20%",
-                        width: 800,
-                        height: 800,
-                        background: "radial-gradient(circle, rgba(245,158,11,0.06) 0%, transparent 60%)",
-                        borderRadius: "50%",
-                        zIndex: -1,
-                        pointerEvents: "none"
-                    }}
-                    animate={{ scale: [1, 1.2, 1], opacity: [0.4, 0.7, 0.4] }}
-                    transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
-                />
-            )}
-
             <AnimatePresence>
-                {isLoading && <LoadingOverlay isLoading={isLoading} message={loadingMsg} />}
+                {isLoading && !isSending && !isScanning && !txHash && <LoadingOverlay isLoading={isLoading} message={loadingMsg} />}
             </AnimatePresence>
 
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 16, marginBottom: 24 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 16, marginBottom: 32 }}>
                 <div>
-                    <h1 style={{ fontSize: 36, fontWeight: 900, fontFamily: "'Nunito',sans-serif", color: "#fff", margin: 0, letterSpacing: "-0.02em" }}>
-                        Send Payment
-                    </h1>
-                    <p style={{ color: "#9ca3af", fontSize: 14, marginTop: 6 }}>Process secure, real-time blockchain payments to suppliers.</p>
+                    <h1 className="header-title">Send Payment</h1>
+                    <p style={{ color: "#6b7280", fontSize: 15, marginTop: 4, margin: 0, fontWeight: 600 }}>Securely transfer funds to suppliers.</p>
                 </div>
 
-                {/* TOGGLEABLE BALANCE UI */}
-                <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, cursor: "pointer", transition: "all 0.2s" }} onClick={() => setIsBalanceHidden(!isBalanceHidden)}>
-                    <span style={{ color: "#9ca3af", fontSize: 12, textTransform: "uppercase", letterSpacing: "0.05em", fontFamily: "'DM Mono',monospace" }}>{token} Balance:</span>
-                    <span style={{ color: "#fff", fontSize: 16, fontWeight: 700, fontFamily: "'DM Mono',monospace", display: "flex", alignItems: "center", gap: 8 }}>
-                        {isBalanceHidden ? "••••••••" : `${balance}`}
-                        <span style={{ fontSize: 14, opacity: 0.7 }}>{isBalanceHidden ? "👁️" : "🙈"}</span>
+                {/* 🚀 UPGRADED BALANCE PILL WIDGET */}
+                <motion.div
+                    className={`balance-pill ${isSubscribed ? "pro-active" : ""}`}
+                    onClick={() => setIsBalanceHidden(!isBalanceHidden)}
+                    whileTap={{ scale: 0.97 }}
+                    title="Tap to reveal/hide balance"
+                >
+                    <div className="balance-pill-left">
+                        <div className="balance-icon">
+                            {token === "XLM" ? "🚀" : token === "PHPC" ? "₱" : "$"}
+                        </div>
+                        <span className="balance-label">{token} Wallet</span>
+                    </div>
+                    <span className={`balance-amount ${isSubscribed ? "pro-text" : ""}`}>
+                        {isBalanceHidden ? "****" : balance}
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.4, cursor: "pointer" }}>
+                            {isBalanceHidden ? (
+                                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24M1 1l22 22"></path>
+                            ) : (
+                                <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></>
+                            )}
+                        </svg>
                     </span>
-                </div>
+                </motion.div>
             </div>
 
             <MonthlyUsageCard monthlyUsage={monthlyUsage} isSubscribed={isSubscribed} usageLimit={sysConfig.freeTierCap} projectedUsage={projectedUsage} />
 
-            <div className="pm-layout-split">
-                <motion.div
-                    animate={isSubscribed ? {
-                        boxShadow: ["0px 0px 0px rgba(245,158,11,0)", "0px 10px 40px rgba(245,158,11,0.12)", "0px 0px 0px rgba(245,158,11,0)"],
-                        borderColor: ["rgba(255,255,255,0.06)", "rgba(245,158,11,0.3)", "rgba(255,255,255,0.06)"]
-                    } : {}}
-                    transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-                    className="pm-card-left"
-                    style={{ background: isSubscribed ? "rgba(15, 17, 26, 0.6)" : "rgba(255,255,255,.04)" }}
-                >
-                    <div style={{ marginBottom: 20 }}>
-                        <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8, fontWeight: 700 }}>Recipient Wallet Address</div>
-                        <input value={destination} onChange={e => setDestination(e.target.value)} disabled={!!txHash} placeholder="G..." style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: "#fff", fontSize: 13, fontFamily: "'DM Mono',monospace", outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} />
-                    </div>
+            <div className="pm-layout-centered">
 
-                    <motion.button type="button" whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }} onClick={() => setIsScanning(!isScanning)} disabled={!!txHash} style={{ background: "rgba(96,165,250,.05)", color: "#60a5fa", border: "1px solid rgba(96,165,250,.3)", borderRadius: 12, padding: "12px 14px", fontWeight: 700, fontSize: 13, cursor: !!txHash ? "not-allowed" : "pointer", opacity: !!txHash ? 0.5 : 1, fontFamily: "'Nunito',sans-serif", width: "100%", marginBottom: 28, transition: "background 0.2s" }}>
-                        {isScanning ? "Cancel Camera Scan" : "📷 Scan Supplier QR Code"}
-                    </motion.button>
+                {/* ----------------------------------------------------------- */}
+                {/* IDLE STATE: THE FORM                                        */}
+                {/* ----------------------------------------------------------- */}
+                {!isScanning && !isSending && !txHash && (
+                    <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className={`premium-input-card ${isSubscribed ? "pro-active" : "standard"}`}
+                    >
+                        {isSubscribed && (
+                            <>
+                                <div className="send-aura-bg" />
+                                <div className="pro-card-body" />
+                                <div className="pro-badge">PRO</div>
+                            </>
+                        )}
 
-                    <div className="pm-dual-fields">
-                        <div>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                                <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 700 }}>Base</div>
-                                <select value={fiatCurrency} onChange={(e) => setFiatCurrency(e.target.value as "PHP" | "USD")} disabled={!!txHash} style={{ background: "transparent", color: "#a78bfa", border: "none", fontSize: 12, outline: "none", cursor: "pointer", fontWeight: "bold" }}>
-                                    <option value="PHP" style={{ color: "#000" }}>PHP (₱)</option>
-                                    <option value="USD" style={{ color: "#000" }}>USD ($)</option>
-                                </select>
-                            </div>
-                            <input type="number" value={amountInFiat} onChange={e => setAmountInFiat(e.target.value)} disabled={!!txHash} placeholder="0.00" style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: "#fff", fontSize: 16, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} />
-                        </div>
-
-                        <motion.div animate={{ opacity: [0.4, 1, 0.4] }} transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }} style={{ paddingBottom: 14, color: isSubscribed ? "#f59e0b" : "#6b7280", fontSize: 20, textAlign: "center" }}>
-                            ⇄
-                        </motion.div>
-
-                        <div>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                                <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 700 }}>Crypto</div>
-                                <select value={token} onChange={(e) => setToken(e.target.value as "XLM" | "PHPC" | "USDC")} disabled={!!txHash} style={{ background: "transparent", color: "#a78bfa", border: "none", fontSize: 12, outline: "none", cursor: "pointer", fontWeight: "bold" }}>
-                                    <option value="USDC" style={{ color: "#000" }}>USDC</option>
-                                    <option value="PHPC" style={{ color: "#000" }}>PHPC</option>
-                                    <option value="XLM" style={{ color: "#000" }}>XLM</option>
-                                </select>
-                            </div>
-                            <input type="number" value={amount} onChange={handleCryptoAmountChange} disabled={!!txHash} placeholder="0.00" style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: isSubscribed ? "#fcd34d" : "#a78bfa", fontSize: 16, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} />
-                        </div>
-                    </div>
-
-                    <div style={{ marginBottom: 32 }}>
-                        <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#9ca3af", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8, fontWeight: 700 }}>Memo / Reference Note</div>
-                        <input value={description} onChange={e => setDescription(e.target.value)} disabled={!!txHash} style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 12, padding: "14px 16px", color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box", transition: "all 0.3s" }} />
-                    </div>
-
-                    {!txHash ? (
-                        <motion.button
-                            type="button"
-                            whileHover={{ scale: 1.02 }}
-                            whileTap={{ scale: 0.98 }}
-                            onClick={() => executePayment()}
-                            disabled={isLoading || !destination || !amount || willExceedLimit}
-                            style={{
-                                width: "100%",
-                                background: willExceedLimit ? "rgba(239, 68, 68, 0.15)" : (isSubscribed ? "linear-gradient(90deg, #f59e0b, #d97706)" : "linear-gradient(135deg,#7c3aed,#4f46e5)"),
-                                color: willExceedLimit ? "#ef4444" : "#fff",
-                                border: willExceedLimit ? "1px solid rgba(239, 68, 68, 0.4)" : "none",
-                                borderRadius: 14,
-                                padding: "18px 16px",
-                                fontWeight: 800,
-                                fontSize: 16,
-                                cursor: (isLoading || !destination || !amount || willExceedLimit) ? "not-allowed" : "pointer",
-                                fontFamily: "'Nunito',sans-serif",
-                                position: "relative",
-                                overflow: "hidden",
-                                boxShadow: isSubscribed && !willExceedLimit ? "0 8px 25px -6px rgba(245,158,11,0.5)" : "0 8px 25px -6px rgba(124,58,237,0.4)",
-                            }}
-                        >
-                            {isSubscribed && !willExceedLimit && !(isLoading || !destination || !amount) && (
-                                <motion.div
-                                    animate={{ left: ["-100%", "200%"] }}
-                                    transition={{ repeat: Infinity, duration: 2.5, ease: "easeInOut", repeatDelay: 3 }}
-                                    style={{ position: "absolute", top: 0, bottom: 0, width: "25%", background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent)", transform: "skewX(-20deg)" }}
+                        <div className="dest-input-container">
+                            <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#6b7280", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8, fontWeight: 700, textAlign: "center" }}>Recipient Address</div>
+                            <div style={{ position: "relative" }}>
+                                <input
+                                    value={destination}
+                                    onChange={e => setDestination(e.target.value)}
+                                    placeholder="G..."
+                                    className={`clean-input ${isSubscribed ? "pro-active" : ""}`}
+                                    style={{ fontSize: 14, fontFamily: "'DM Mono',monospace", marginBottom: 0, paddingRight: 60 }}
                                 />
-                            )}
-                            {willExceedLimit ? "Limit Exceeded" : (isLoading ? "Processing..." : "Authorize Transaction")}
-                        </motion.button>
-                    ) : (
-                        <button type="button" onClick={resetPayment} style={{ width: "100%", background: "transparent", color: "#10b981", border: "1px solid rgba(16,185,129,.3)", borderRadius: 12, padding: 14, fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "'Nunito',sans-serif", transition: "background 0.2s" }}>
-                            Send Another Payment
-                        </button>
-                    )}
-                </motion.div>
-
-                <motion.div
-                    animate={isSubscribed ? {
-                        boxShadow: ["0px 0px 0px rgba(245,158,11,0)", "0px 10px 40px rgba(245,158,11,0.12)", "0px 0px 0px rgba(245,158,11,0)"],
-                        borderColor: ["rgba(255,255,255,0.06)", "rgba(245,158,11,0.2)", "rgba(255,255,255,0.06)"]
-                    } : {}}
-                    transition={{ duration: 5, delay: 2.5, repeat: Infinity, ease: "easeInOut" }}
-                    className="pm-card-right"
-                    style={{ background: isSubscribed ? "rgba(15, 17, 26, 0.6)" : "rgba(255,255,255,.04)", padding: txHash ? "24px" : "40px" }}
-                >
-                    {isSubscribed && !txHash && (
-                        <>
-                            <FloatingNode delay={0} x="15%" y="20%" size={6} color="#f59e0b" blur={2} />
-                            <FloatingNode delay={0.7} x="85%" y="30%" size={12} color="#10b981" blur={4} />
-                            <FloatingNode delay={1.5} x="25%" y="75%" size={5} color="#a78bfa" blur={1} />
-                            <FloatingNode delay={1.0} x="75%" y="70%" size={8} color="#f59e0b" blur={3} />
-                        </>
-                    )}
-
-                    {!isScanning && !txHash && (
-                        <motion.div
-                            animate={isSubscribed ? { y: [-8, 8, -8] } : {}}
-                            transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-                            style={{ textAlign: "center", color: "#9ca3af", fontSize: 15, zIndex: 10, maxWidth: 280, lineHeight: 1.6 }}
-                        >
-                            <div style={{ fontSize: 56, marginBottom: 20, filter: isSubscribed ? "drop-shadow(0 0 20px rgba(245,158,11,0.4))" : "none" }}>💸</div>
-                            Enter details or scan a supplier's QR code to initiate a secure blockchain transfer.
-                        </motion.div>
-                    )}
-
-                    {isScanning && (
-                        <div style={{ width: "100%", display: "flex", flexDirection: "column", alignItems: "center", zIndex: 10 }}>
-                            <div style={{ fontSize: 12, fontFamily: "'DM Mono',monospace", color: "#60a5fa", letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 24, fontWeight: 700 }}>Point at Supplier QR</div>
-                            <div className="pm-scanner-box">
-                                <Scanner onScan={(result) => handleScan(result[0].rawValue)} />
+                                {/* 🚀 NEW: Premium Viewfinder Camera Icon */}
+                                <button className={`dest-scan-btn ${isSubscribed ? "pro-active" : ""}`} onClick={() => setIsScanning(true)} title="Scan Supplier QR Code">
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M3 7V5a2 2 0 0 1 2-2h2"></path>
+                                        <path d="M17 3h2a2 2 0 0 1 2 2v2"></path>
+                                        <path d="M21 17v2a2 2 0 0 1-2 2h-2"></path>
+                                        <path d="M7 21H5a2 2 0 0 1-2-2v-2"></path>
+                                        <line x1="7" y1="12" x2="17" y2="12"></line>
+                                    </svg>
+                                </button>
                             </div>
                         </div>
-                    )}
 
-                    {txHash && !isScanning && (
-                        <motion.div
-                            initial={{ opacity: 0, scale: 0.95 }}
-                            animate={{ opacity: 1, scale: 1 }}
-                            transition={{ duration: 0.4, type: "spring", bounce: 0.4 }}
-                            style={{ display: "flex", flexDirection: "column", alignItems: "center", width: "100%" }}
+                        <div className={`primary-token-badge ${isSubscribed ? "pro-active" : ""}`}>
+                            <select value={token} onChange={(e) => setToken(e.target.value as "XLM" | "PHPC" | "USDC")} className={`primary-token-select ${isSubscribed ? "pro-text" : ""}`}>
+                                <option value="USDC">USDC</option>
+                                <option value="PHPC">PHPC</option>
+                                <option value="XLM">XLM</option>
+                            </select>
+                            <span style={{ fontSize: 12, color: isSubscribed ? "#d97706" : "#9ca3af" }}>▼</span>
+                        </div>
+
+                        <input
+                            type="number"
+                            value={amount}
+                            onChange={handleCryptoAmountChange}
+                            placeholder="0"
+                            className={`massive-naked-input ${isSubscribed ? "pro-text" : ""}`}
+                            autoFocus
+                        />
+
+                        <div className="fiat-preview-row">
+                            <span>≈</span>
+                            <input
+                                type="number"
+                                value={amountInFiat}
+                                onChange={handleFiatAmountChange}
+                                placeholder="0.00"
+                                className="naked-fiat-input"
+                            />
+                            <select value={fiatCurrency} onChange={(e) => setFiatCurrency(e.target.value as "PHP" | "USD")} className="naked-fiat-select">
+                                <option value="PHP">PHP</option>
+                                <option value="USD">USD</option>
+                            </select>
+                        </div>
+
+                        <input
+                            value={description}
+                            onChange={e => setDescription(e.target.value)}
+                            placeholder="Add a note (optional)"
+                            className={`clean-input ${isSubscribed ? "pro-active" : ""}`}
+                        />
+
+                        <button
+                            type="button"
+                            onClick={() => executePayment()}
+                            disabled={!destination || !amount || willExceedLimit}
+                            className={`premium-btn ${isSubscribed ? "pro-active" : ""}`}
+                            style={{ background: willExceedLimit ? "#ef4444" : undefined }}
                         >
-                            <div style={{ width: "100%", maxWidth: 480 }}>
-                                {/* IDENTICAL RECEIPT PDF CONTAINER */}
-                                <div id="printable-receipt" style={{ background: "#ffffff", borderRadius: 16, padding: "40px 32px", position: "relative", overflow: "hidden" }}>
+                            {willExceedLimit ? "Limit Exceeded" : "Authorize Transaction"}
+                        </button>
+                    </motion.div>
+                )}
 
-                                    <div style={{ textAlign: "center", marginBottom: "32px", marginTop: "8px", padding: "10px" }}>
-                                        <img
-                                            src="/images/luxphlogo.svg"
-                                            alt="Lux PH Icon"
-                                            style={{
-                                                height: "36px",
-                                                width: "auto",
-                                                display: "inline-block",
-                                                verticalAlign: "middle",
-                                                marginRight: "12px",
-                                                position: "relative",
-                                                top: "8px"
-                                            }}
-                                            crossOrigin="anonymous"
-                                        />
-                                        <span style={{
-                                            fontSize: "32px",
-                                            fontWeight: 900,
-                                            color: "#0f172a",
-                                            fontFamily: "'Nunito',sans-serif",
-                                            letterSpacing: "1px",
-                                            display: "inline-block",
-                                            verticalAlign: "middle"
-                                        }}>
-                                            LUX PH
-                                        </span>
-                                    </div>
+                {/* ----------------------------------------------------------- */}
+                {/* SCANNING STATE: CENTERED CAMERA VIEW WITH LASER               */}
+                {/* ----------------------------------------------------------- */}
+                {isScanning && !isSending && !txHash && (
+                    <motion.div
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className={`terminal-card ${isSubscribed ? "pro-active" : "standard"}`}
+                    >
+                        {isSubscribed && (
+                            <>
+                                <div className="send-aura-bg" />
+                                <div className="pro-card-body" />
+                            </>
+                        )}
 
-                                    <div style={{ textAlign: "center", marginBottom: 36 }}>
-                                        <div style={{ width: 72, height: 72, background: "#10b981", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", color: "#fff" }}>
-                                            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                                                <polyline points="20 6 9 17 4 12"></polyline>
-                                            </svg>
-                                        </div>
+                        <div style={{ textAlign: "center", marginBottom: 24 }}>
+                            <div style={{ fontSize: 24, fontWeight: 900, color: "#111827", fontFamily: "'Nunito',sans-serif", letterSpacing: "-0.02em" }}>Scan to Pay</div>
+                            <div style={{ fontSize: 14, color: "#6b7280", marginTop: 4, fontWeight: 500 }}>Point camera at supplier's QR code</div>
+                        </div>
 
-                                        <h2 style={{ margin: 0, color: "#0f172a", fontFamily: "'Nunito',sans-serif", fontSize: 26, fontWeight: 900 }}>Payment Sent</h2>
-                                        <p style={{ margin: "6px 0 0 0", color: "#64748b", fontSize: 14 }}>Funds securely transferred to recipient.</p>
-                                    </div>
+                        <div className="qr-clean-frame" style={{ border: isSubscribed ? "2px solid #34d399" : "2px solid #e5e7eb" }}>
+                            <div className={`scanner-laser ${isSubscribed ? 'pro-active' : ''}`} />
+                            <Scanner onScan={(result) => handleScan(result[0].rawValue)} />
+                        </div>
 
-                                    <div style={{ borderTop: "2px dashed #e5e7eb", borderBottom: "2px dashed #e5e7eb", padding: "24px 0", marginBottom: 24, display: "flex", flexDirection: "column", gap: 16 }}>
-                                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                            <span style={{ color: "#6b7280", fontSize: 13 }}>Recipient Address</span>
-                                            <span style={{ color: "#111827", fontSize: 13, fontWeight: 700, fontFamily: "'DM Mono',monospace" }}>{destination.substring(0, 10)}...</span>
-                                        </div>
-                                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                            <span style={{ color: "#6b7280", fontSize: 13 }}>Date & Time</span>
-                                            <span style={{ color: "#111827", fontSize: 13, fontWeight: 600 }}>{receiptDate}</span>
-                                        </div>
-                                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                            <span style={{ color: "#6b7280", fontSize: 13 }}>Description</span>
-                                            <span style={{ color: "#111827", fontSize: 13, fontWeight: 600 }}>{description || "Payment"}</span>
-                                        </div>
-                                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                            <span style={{ color: "#6b7280", fontSize: 13 }}>Amount Sent</span>
-                                            <span style={{ color: "#ef4444", fontSize: 13, fontWeight: 700 }}>- {parseFloat(amount).toLocaleString()} {token}</span>
-                                        </div>
-                                    </div>
+                        <button
+                            type="button"
+                            onClick={() => setIsScanning(false)}
+                            style={{ background: "transparent", color: "#ef4444", border: "1px solid #fecaca", borderRadius: 16, padding: "14px 32px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "'Nunito',sans-serif" }}
+                        >
+                            Cancel Scan
+                        </button>
+                    </motion.div>
+                )}
 
-                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-                                        <span style={{ color: "#374151", fontSize: 16, fontWeight: 700 }}>{fiatCurrency} Value</span>
-                                        <span style={{ color: "#10b981", fontSize: 28, fontWeight: 800, fontFamily: "'Nunito',sans-serif" }}>
-                                            {fiatCurrency === "PHP" ? "₱" : "$"}{parseFloat(amountInFiat).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                        </span>
-                                    </div>
+                {/* ----------------------------------------------------------- */}
+                {/* SENDING (PROCESSING) STATE: OUTGOING PULSE ANIMATION        */}
+                {/* ----------------------------------------------------------- */}
+                {isSending && !txHash && (
+                    <motion.div
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className={`terminal-card ${isSubscribed ? "pro-active" : "standard"}`}
+                    >
+                        {isSubscribed && (
+                            <>
+                                <div className="send-aura-bg" />
+                                <div className="pro-card-body" />
+                            </>
+                        )}
 
-                                    <div style={{ textAlign: "center", fontSize: 11, color: "#9ca3af", fontFamily: "'DM Mono',monospace", wordBreak: "break-all", background: "#f3f4f6", padding: 12, borderRadius: 8 }}>
-                                        <div style={{ color: "#6b7280", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em", fontSize: 10 }}>Stellar Transaction Hash</div>
-                                        {txHash}
-                                    </div>
+                        <div className="confirm-ring-container">
+                            <div className={`outgoing-pulse-ring ${isSubscribed ? 'pro-active' : ''}`} />
 
-                                    <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 24, flexWrap: "wrap" }}>
-                                        <div style={{ background: "rgba(16,185,129,0.1)", color: "#10b981", border: "1px solid rgba(16,185,129,0.2)", borderRadius: 20, padding: "6px 14px", fontSize: 12, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>
-                                            ⚡ Network: {speeds.network}s
-                                        </div>
-                                        <div style={{ background: "rgba(10, 37, 64, 0.1)", color: "#0a2540", border: "1px solid rgba(10, 37, 64, 0.2)", borderRadius: 20, padding: "6px 14px", fontSize: 12, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>
-                                            ⏱️ Total: {speeds.total}s
-                                        </div>
-                                        <div style={{ background: isTestnet ? "rgba(239,68,68,0.1)" : "rgba(59,130,246,0.1)", color: isTestnet ? "#ef4444" : "#3b82f6", border: isTestnet ? "1px solid rgba(239,68,68,0.2)" : "1px solid rgba(59,130,246,0.2)", borderRadius: 20, padding: "6px 14px", fontSize: 12, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>
-                                            🌐 {networkName}
-                                        </div>
-                                    </div>
+                            {/* 🚀 NEW: Firing Telemetry Arrow inside the core */}
+                            <div className={`outgoing-pulse-core ${isSubscribed ? 'pro-active' : ''}`}>
+                                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ animation: "flyUp 1.5s ease-in-out infinite" }}>
+                                    <line x1="12" y1="19" x2="12" y2="5"></line>
+                                    <polyline points="5 12 12 5 19 12"></polyline>
+                                </svg>
+                            </div>
+
+                            <div style={{ position: "absolute", bottom: 20, textAlign: "center", width: "100%" }}>
+                                <div style={{ fontSize: 18, fontWeight: 900, color: "#111827", fontFamily: "'Nunito',sans-serif" }}>
+                                    Sending Payment...
                                 </div>
-
-                                <div className="receipt-action-buttons">
-                                    <button
-                                        type="button"
-                                        onClick={handleDownloadPDF}
-                                        disabled={isGeneratingPdf}
-                                        style={{
-                                            flex: 1,
-                                            background: "rgba(255,255,255,.05)",
-                                            color: "#fff",
-                                            border: "1px solid rgba(255,255,255,.1)",
-                                            borderRadius: 8,
-                                            padding: "12px",
-                                            fontWeight: 700,
-                                            fontSize: 14,
-                                            cursor: isGeneratingPdf ? "wait" : "pointer",
-                                            fontFamily: "'Nunito',sans-serif",
-                                            display: "flex",
-                                            alignItems: "center",
-                                            justifyContent: "center",
-                                            gap: "8px"
-                                        }}
-                                    >
-                                        {isGeneratingPdf ? "⏳ Generating..." : "📄 Download PDF"}
-                                    </button>
-                                    <a href={`${sysConfig.networkPassphrase === Networks.TESTNET ? "https://stellar.expert/explorer/testnet/tx/" : "https://stellar.expert/explorer/public/tx/"}${txHash}`} target="_blank" rel="noreferrer" style={{ flex: 1, textDecoration: "none" }}>
-                                        <button type="button" style={{ width: "100%", background: "rgba(10, 37, 64, 0.5)", color: "#93c5fd", border: "1px solid #1e3a8a", borderRadius: 8, padding: "12px", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "'Nunito',sans-serif" }}>
-                                            🔗 View Explorer
-                                        </button>
-                                    </a>
+                                <div style={{ fontSize: 13, color: "#6b7280", marginTop: 6, fontWeight: 600 }}>
+                                    {loadingMsg}
                                 </div>
                             </div>
-                        </motion.div>
-                    )}
-                </motion.div>
+                        </div>
+                    </motion.div>
+                )}
+
+                {/* ----------------------------------------------------------- */}
+                {/* SUCCESS STATE: HIGH-END RECEIPT                             */}
+                {/* ----------------------------------------------------------- */}
+                {txHash && (
+                    <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        style={{ width: "100%", display: "flex", flexDirection: "column", alignItems: "center" }}
+                    >
+                        <div id="printable-receipt" className="clean-receipt">
+
+                            <div style={{ textAlign: "center", marginBottom: 40 }}>
+                                <div style={{ width: 64, height: 64, background: "#111827", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px", color: "#fff", boxShadow: "0 10px 25px rgba(0,0,0,0.1)" }}>
+                                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                        <polyline points="20 6 9 17 4 12"></polyline>
+                                    </svg>
+                                </div>
+                                <h2 style={{ margin: 0, color: "#111827", fontFamily: "'Nunito',sans-serif", fontSize: 24, fontWeight: 900 }}>Payment Sent</h2>
+                                <p style={{ margin: "4px 0 0 0", color: "#6b7280", fontSize: 14, fontWeight: 600 }}>Funds securely transferred.</p>
+                            </div>
+
+                            <div style={{ borderTop: "2px dashed #e5e7eb", borderBottom: "2px dashed #e5e7eb", padding: "24px 0", marginBottom: 24, display: "flex", flexDirection: "column", gap: 16 }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                    <span style={{ color: "#6b7280", fontSize: 14, fontWeight: 600 }}>Amount Sent</span>
+                                    <span style={{ color: "#ef4444", fontSize: 15, fontWeight: 900 }}>- {parseFloat(amount).toLocaleString()} {token}</span>
+                                </div>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                    <span style={{ color: "#6b7280", fontSize: 14, fontWeight: 600 }}>Fiat Value</span>
+                                    <span style={{ color: "#111827", fontSize: 15, fontWeight: 800 }}>{fiatCurrency === "PHP" ? "₱" : "$"}{parseFloat(amountInFiat).toLocaleString()}</span>
+                                </div>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                                    <span style={{ color: "#6b7280", fontSize: 14, fontWeight: 600, minWidth: 80 }}>To Address</span>
+                                    <span style={{ color: "#111827", fontSize: 13, fontWeight: 700, fontFamily: "'DM Mono',monospace", wordBreak: "break-all", textAlign: "right" }}>{destination}</span>
+                                </div>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                    <span style={{ color: "#6b7280", fontSize: 14, fontWeight: 600 }}>Date</span>
+                                    <span style={{ color: "#111827", fontSize: 14, fontWeight: 700 }}>{receiptDate}</span>
+                                </div>
+                            </div>
+
+                            <div style={{ textAlign: "center", fontSize: 11, color: "#6b7280", fontFamily: "'DM Mono',monospace", wordBreak: "break-all", background: "#f9fafb", padding: 16, borderRadius: 12, border: "1px solid #e5e7eb" }}>
+                                <div style={{ color: "#9ca3af", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em", fontSize: 10, fontWeight: 800 }}>Transaction Hash</div>
+                                {txHash}
+                            </div>
+
+                            <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 24, flexWrap: "wrap" }}>
+                                <div style={{ background: "#ecfdf5", color: "#059669", border: "1px solid #a7f3d0", borderRadius: 20, padding: "6px 14px", fontSize: 12, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>
+                                    ⚡ {speeds.network}s
+                                </div>
+                                <div style={{ background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", borderRadius: 20, padding: "6px 14px", fontSize: 12, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>
+                                    ⏱️ {speeds.total}s
+                                </div>
+                            </div>
+
+                        </div>
+
+                        <div className="receipt-action-buttons">
+                            <button
+                                type="button"
+                                onClick={handleDownloadPDF}
+                                disabled={isGeneratingPdf}
+                                style={{ flex: 1, background: "#f3f4f6", color: "#374151", border: "1px solid #e5e7eb", borderRadius: 20, padding: "20px", fontWeight: 800, fontSize: 15, cursor: isGeneratingPdf ? "wait" : "pointer", fontFamily: "'Nunito',sans-serif" }}
+                            >
+                                {isGeneratingPdf ? "Generating..." : "Save Receipt"}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={resetPayment}
+                                className={`premium-btn ${isSubscribed ? "pro-active" : ""}`}
+                                style={{ flex: 1, borderRadius: 20 }}
+                            >
+                                Send Another
+                            </button>
+                        </div>
+                    </motion.div>
+                )}
             </div>
         </div>
     );

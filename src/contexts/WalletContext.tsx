@@ -15,7 +15,8 @@ export interface WalletAdapter {
     id: string;
     name: string;
     isAvailable(): boolean;
-    connect(network?: StellarKitNetworks): Promise<string>;
+    // 🚀 NEW: We now return the exact wallet NAME alongside the address!
+    connect(network?: StellarKitNetworks): Promise<{ address: string; name: string }>;
     disconnect(): Promise<void>;
     signTransaction(xdr: string, networkPassphrase: string): Promise<string>;
 }
@@ -32,14 +33,14 @@ class FreighterAdapter implements WalletAdapter {
         return !!(window as any).freighter;
     }
 
-    async connect(): Promise<string> {
+    async connect(): Promise<{ address: string; name: string }> {
         if (!this.isAvailable()) throw new Error('Freighter is not installed.');
 
         const { requestAccess } = await import('@stellar/freighter-api');
         const access = await requestAccess();
 
         if (access.error) throw new Error(access.error);
-        return access.address;
+        return { address: access.address, name: "freighter" }; // Identifies as freighter
     }
 
     async disconnect(): Promise<void> {
@@ -47,32 +48,37 @@ class FreighterAdapter implements WalletAdapter {
     }
 
     async signTransaction(xdr: string, networkPassphrase: string): Promise<string> {
-        // Wake up the Kit if the user refreshed the page
         const network = networkPassphrase.includes("Public") ? StellarKitNetworks.PUBLIC : StellarKitNetworks.TESTNET;
         this.initializeKit(network);
 
         try {
             const response = await StellarWalletsKit.signTransaction(xdr, { networkPassphrase });
 
-            if (!response) {
-                throw new Error('Transaction signing failed or was cancelled.');
-            }
+            if (!response) throw new Error('Transaction signing failed or was cancelled.');
 
             return typeof response === 'string'
                 ? response
                 : (response as any).signedTxXdr || (response as any).signedTransaction || '';
         } catch (error: any) {
-            // 🚨 FIX: Catch the specific WalletConnect / Lobstr missing key error
             if (error?.message === 'The connection key is missing' || error?.code === -1) {
                 throw new Error("Your secure wallet session expired after a page refresh. Please Disconnect and Reconnect your wallet to continue.");
             }
-
-            // Extract WalletConnect unformatted objects so it doesn't crash as [object Object]
             if (error && typeof error === 'object' && !error.message) {
                 throw new Error(`Wallet Error: ${JSON.stringify(error)}`);
             }
             throw error;
         }
+    }
+
+    // Helper for waking up the kit (reusing SWK logic internally if needed)
+    private initializeKit(network: StellarKitNetworks) {
+        if (!document.getElementById('swk-global-modal-fix')) {
+            const style = document.createElement('style');
+            style.id = 'swk-global-modal-fix';
+            style.innerHTML = `#stellar-wallets-kit-modal-root { display: none; }`;
+            document.head.appendChild(style);
+        }
+        StellarWalletsKit.init({ modules: [new FreighterModule()], network, authModal: { showInstallLabel: true, hideUnsupportedWallets: false } });
     }
 }
 
@@ -87,26 +93,57 @@ class StellarWalletsKitAdapter implements WalletAdapter {
         if (!document.getElementById('swk-global-modal-fix')) {
             const style = document.createElement('style');
             style.id = 'swk-global-modal-fix';
+
+            // 🚀 LIGHT MODE NUCLEAR UI FIX FOR THE MODAL 🚀
             style.innerHTML = `
-                stellar-wallets-modal {
+                /* Absolute top layer containment */
+                #stellar-wallets-kit-modal-root {
                     position: fixed !important;
-                    top: 50% !important;
-                    left: 50% !important;
-                    transform: translate(-50%, -50%) !important;
-                    z-index: 2147483647 !important; 
-                    margin: 0 !important;
-                    bottom: auto !important;
-                    right: auto !important;
+                    top: 0 !important;
+                    left: 0 !important;
+                    width: 100vw !important;
+                    height: 100vh !important;
+                    z-index: 9999999 !important;
+                    display: flex !important;
+                    align-items: center !important;
+                    justify-content: center !important;
+                    pointer-events: none !important;
                 }
+
+                /* Center the Web Component */
+                stellar-wallets-modal {
+                    position: relative !important;
+                    top: auto !important;
+                    left: auto !important;
+                    transform: none !important;
+                    z-index: 10000000 !important;
+                    pointer-events: auto !important;
+                }
+
+                /* Dark blur overlay to make the Light Mode app fade out behind it */
                 stellar-wallets-modal::part(overlay) {
                     position: fixed !important;
                     top: 0 !important;
                     left: 0 !important;
                     width: 100vw !important;
                     height: 100vh !important;
-                    background: rgba(0, 0, 0, 0.65) !important;
-                    backdrop-filter: blur(5px) !important;
-                    z-index: 2147483646 !important;
+                    background: rgba(0, 0, 0, 0.4) !important;
+                    backdrop-filter: blur(6px) !important;
+                }
+
+                /* Mobile Bottom Sheet Override */
+                @media (max-width: 768px) {
+                    #stellar-wallets-kit-modal-root {
+                        align-items: flex-end !important;
+                        padding-bottom: env(safe-area-inset-bottom) !important;
+                    }
+                    stellar-wallets-modal {
+                        width: 100% !important;
+                        max-width: 100vw !important;
+                        margin: 0 !important;
+                        border-bottom-left-radius: 0 !important;
+                        border-bottom-right-radius: 0 !important;
+                    }
                 }
             `;
             document.head.appendChild(style);
@@ -131,14 +168,44 @@ class StellarWalletsKitAdapter implements WalletAdapter {
         return typeof window !== 'undefined';
     }
 
-    async connect(network: StellarKitNetworks = StellarKitNetworks.TESTNET): Promise<string> {
+    async connect(network: StellarKitNetworks = StellarKitNetworks.TESTNET): Promise<{ address: string; name: string }> {
         this.initializeKit(network);
-        const result = await StellarWalletsKit.authModal({ container: document.body });
+        const result: any = await StellarWalletsKit.authModal({ container: document.body });
 
         if (!result || !result.address) {
             throw new Error('Wallet connection was cancelled or failed.');
         }
-        return result.address;
+
+        // 🚀 THE WALLET SNIFFER: Extracts the exact app picked in the modal!
+        let actualWalletName = 'Secured Wallet';
+
+        // Method A: The kit returned the ID directly in the payload
+        if (result.walletId) actualWalletName = result.walletId;
+        else if (result.wallet) actualWalletName = result.wallet;
+        else if (result.id) actualWalletName = result.id;
+        else if (result.name) actualWalletName = result.name;
+
+        // Method B: Fallback to sniffing LocalStorage where SWK saves the session
+        if (actualWalletName === 'Secured Wallet') {
+            try {
+                const lsWallet = localStorage.getItem('stellarWalletsKit');
+                const lsSwk = localStorage.getItem('swk:active-wallet'); // Newer version key
+
+                const activeLs = lsSwk || lsWallet;
+                if (activeLs) {
+                    if (activeLs.includes('{')) {
+                        const parsed = JSON.parse(activeLs);
+                        actualWalletName = parsed.id || parsed.name || parsed.activeWallet || 'Secured Wallet';
+                    } else {
+                        actualWalletName = activeLs;
+                    }
+                }
+            } catch (e) {
+                // Ignore parse errors silently
+            }
+        }
+
+        return { address: result.address, name: actualWalletName };
     }
 
     async disconnect(): Promise<void> {
@@ -147,22 +214,18 @@ class StellarWalletsKitAdapter implements WalletAdapter {
     }
 
     async signTransaction(xdr: string, networkPassphrase: string): Promise<string> {
-        // 🚨 FIX: Wake up the Kit if the user refreshed the page and bypassed the Connect button!
         const network = networkPassphrase.includes("Public") ? StellarKitNetworks.PUBLIC : StellarKitNetworks.TESTNET;
         this.initializeKit(network);
 
         try {
             const response = await StellarWalletsKit.signTransaction(xdr, { networkPassphrase });
 
-            if (!response) {
-                throw new Error('Transaction signing failed or was cancelled.');
-            }
+            if (!response) throw new Error('Transaction signing failed or was cancelled.');
 
             return typeof response === 'string'
                 ? response
                 : (response as any).signedTxXdr || (response as any).signedTransaction || '';
         } catch (error: any) {
-            // 🚨 FIX: Extract WalletConnect unformatted objects so it doesn't crash as [object Object]
             if (error && typeof error === 'object' && !error.message) {
                 throw new Error(`Wallet Error: ${JSON.stringify(error)}`);
             }
@@ -178,6 +241,7 @@ interface WalletContextType {
     address: string;
     isConnecting: boolean;
     activeAdapterId: string | null;
+    walletName: string; // 🚀 EXPORT THE SNIFFED NAME
     availableAdapters: WalletAdapter[];
     connect: (adapterId?: string | any) => Promise<void>;
     disconnect: () => void;
@@ -196,13 +260,16 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
     const [address, setAddress] = useState<string>('');
     const [isConnecting, setIsConnecting] = useState(false);
     const [activeAdapterId, setActiveAdapterId] = useState<string | null>(null);
+    const [walletName, setWalletName] = useState<string>(''); // 🚀 STATE FOR WALLET NAME
 
     useEffect(() => {
         const savedAddress = localStorage.getItem('wallet_address');
         const savedAdapter = localStorage.getItem('wallet_adapter');
+        const savedName = localStorage.getItem('wallet_actual_name'); // Load sniffed name
         if (savedAddress && savedAdapter) {
             setAddress(savedAddress);
             setActiveAdapterId(savedAdapter);
+            if (savedName) setWalletName(savedName);
         }
     }, []);
 
@@ -223,13 +290,16 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
                 throw new Error(`${adapter.name} is not installed on this browser.`);
             }
 
-            const pubKey = await adapter.connect(networkKit);
+            // 🚀 Extract BOTH the address and the specific name returned by the adapter
+            const { address: pubKey, name: actualName } = await adapter.connect(networkKit);
 
             setAddress(pubKey);
             setActiveAdapterId(targetAdapterId);
+            setWalletName(actualName); // Save the precise name to state
 
             localStorage.setItem('wallet_address', pubKey);
             localStorage.setItem('wallet_adapter', targetAdapterId);
+            localStorage.setItem('wallet_actual_name', actualName); // Save for reloads
         } catch (error: any) {
             console.error('Wallet connection failed:', error);
             if (error.message && !error.message.includes('cancelled')) {
@@ -246,8 +316,10 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
 
         setAddress('');
         setActiveAdapterId(null);
+        setWalletName('');
         localStorage.removeItem('wallet_address');
         localStorage.removeItem('wallet_adapter');
+        localStorage.removeItem('wallet_actual_name');
     };
 
     const signTx = async (xdr: string, networkPassphrase: string): Promise<string> => {
@@ -262,6 +334,7 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
             address,
             isConnecting,
             activeAdapterId,
+            walletName, // Provide it to the rest of the app!
             availableAdapters: ADAPTERS,
             connect,
             disconnect,
