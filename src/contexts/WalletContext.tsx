@@ -3,7 +3,6 @@ import { StellarWalletsKit, Networks as StellarKitNetworks } from '@creit.tech/s
 import { AlbedoModule } from '@creit.tech/stellar-wallets-kit/modules/albedo';
 import { FreighterModule } from '@creit.tech/stellar-wallets-kit/modules/freighter';
 import { LobstrModule } from '@creit.tech/stellar-wallets-kit/modules/lobstr';
-// 🚀 FIX: The export uses a lowercase 'x' (xBullModule)
 import { xBullModule } from '@creit.tech/stellar-wallets-kit/modules/xbull';
 import { WalletConnectModule } from '@creit.tech/stellar-wallets-kit/modules/wallet-connect';
 import { Networks } from '@stellar/stellar-sdk';
@@ -130,6 +129,12 @@ class StellarWalletsKitAdapter implements WalletAdapter {
                     backdrop-filter: blur(6px) !important;
                 }
 
+                /* 🚀 CRITICAL FIX: Pull the WalletConnect Modal ABOVE everything else! */
+                wcm-modal, w3m-modal {
+                    z-index: 2147483647 !important;
+                    position: relative;
+                }
+
                 /* Mobile Bottom Sheet Override */
                 @media (max-width: 768px) {
                     #stellar-wallets-kit-modal-root {
@@ -148,21 +153,27 @@ class StellarWalletsKitAdapter implements WalletAdapter {
             document.head.appendChild(style);
         }
 
-        const modules = [
-            new AlbedoModule(),
-            new FreighterModule(),
-            new LobstrModule(),
-            new xBullModule(), // 🚀 FIX: Updated to match correct import
+        // 🚀 MOBILE SNIFFER: Detect if user is on a phone
+        const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+
+        // Core mobile-friendly modules
+        const coreModules = [
             new WalletConnectModule({
-                projectId: '39a7791b4ec3d90f2305aabaf5d0c648',
+                projectId: '39a7791b4ec3d90f2305aabaf5d0c648', // You should eventually replace this with your own ID from WalletConnect Cloud
                 metadata: {
                     name: 'Lux PH Merchant',
                     description: 'Official Lux PH Merchant Dashboard',
                     url: window.location.origin,
                     icons: ['https://stellar.org/favicon.ico']
                 }
-            })
+            }),
+            new xBullModule() // xBull natively deep links without WalletConnect sometimes
         ];
+
+        // 🚀 SMART ARRAY: Only add Freighter/Lobstr Desktop buttons if NOT on mobile!
+        const modules = isMobile
+            ? coreModules
+            : [...coreModules, new FreighterModule(), new LobstrModule(), new AlbedoModule()];
 
         if (!this.initialized) {
             StellarWalletsKit.init({
