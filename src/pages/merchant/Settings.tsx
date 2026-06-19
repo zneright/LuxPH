@@ -1,8 +1,9 @@
+// C:\Users\Renz Jericho Buday\LuxPH\lux-ph\src\pages\merchant\Settings.tsx
 import React, { useState, useEffect } from 'react';
 import { auth, db } from '../../config/firebase';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { useWallet } from '../../contexts/WalletContext';
-import { doc, getDoc, setDoc, collection, getDocs, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, getDocs, updateDoc, deleteField } from 'firebase/firestore';
 import MonthlyUsageCard from "../../components/dashboard/MonthlyUsageCard";
 import { LoadingBadge } from "../../components/dashboard/LoadingBadge";
 import { motion } from "framer-motion";
@@ -137,8 +138,11 @@ export default function Settings() {
     await disconnectWalletAdapter();
     setStellarAddress("");
     if (user) {
+      // 🚀 Completely removes the fields from Firebase
       await updateDoc(doc(db, "merchants", user.uid), {
-        stellarPublicKey: "", encryptedSecretKey: "", "vaultConfig.isEnabled": false
+        stellarPublicKey: deleteField(),
+        encryptedSecretKey: deleteField(),
+        "vaultConfig.isEnabled": false
       });
       setMerchantData(prev => prev ? { ...prev, stellarPublicKey: "" } : null);
     }
@@ -185,13 +189,9 @@ export default function Settings() {
       ctx.quadraticCurveTo(400, 300, 0, 200);
       ctx.fill();
 
-      // 3. Removed redundant header logo as requested
-      // ctx.drawImage(logoImg, 340, 40, 120, 120);
-
       ctx.fillStyle = "#ffffff";
       ctx.font = "bold 40px Arial";
       ctx.textAlign = "center";
-      // Moved the text up slightly to balance the missing logo
       ctx.fillText("LUX PH", 400, 130);
 
       // 4. Store Branding & DYNAMIC FONT SIZING
@@ -368,6 +368,49 @@ export default function Settings() {
           
           .links-row { flex-direction: column; }
           .app-link { width: 100%; }
+        }
+
+        /* =========================================================================
+           NUCLEAR OVERRIDES: FORCES WALLET MODAL TO CENTER / OVERLAY
+           (Moved here from MerchantLayout)
+           ========================================================================= */
+        stellar-wallets-modal,
+        #stellar-wallets-kit-modal-root,
+        [id^="stellar-wallets-modal"] {
+            position: fixed !important;
+            top: 50% !important;
+            left: 50% !important;
+            transform: translate(-50%, -50%) !important;
+            z-index: 2147483647 !important;
+            margin: 0 !important;
+            bottom: auto !important;
+            right: auto !important;
+        }
+
+        /* Dark blur behind the modal so it pops in light mode */
+        stellar-wallets-modal::part(overlay) {
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 100vw !important;
+            height: 100vh !important;
+            background: rgba(0, 0, 0, 0.5) !important;
+            backdrop-filter: blur(4px) !important;
+        }
+
+        /* Mobile specific bottom-sheet styling */
+        @media (max-width: 768px) {
+          stellar-wallets-modal,
+          #stellar-wallets-kit-modal-root,
+          [id^="stellar-wallets-modal"] {
+              top: auto !important;
+              bottom: 0 !important;
+              left: 50% !important;
+              transform: translate(-50%, 0) !important;
+              width: 100vw !important;
+              max-width: 100vw !important;
+              padding-bottom: env(safe-area-inset-bottom) !important;
+          }
         }
       `}</style>
 

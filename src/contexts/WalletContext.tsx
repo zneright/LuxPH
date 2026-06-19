@@ -153,13 +153,10 @@ class StellarWalletsKitAdapter implements WalletAdapter {
             document.head.appendChild(style);
         }
 
-        // 🚀 MOBILE SNIFFER: Detect if user is on a phone
-        const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
-
-        // Core mobile-friendly modules
-        const coreModules = [
+        // 🚀 SMART FIX: Load all modules universally so Desktop and Mobile behave identically.
+        const modules = [
             new WalletConnectModule({
-                projectId: '39a7791b4ec3d90f2305aabaf5d0c648', // You should eventually replace this with your own ID from WalletConnect Cloud
+                projectId: '39a7791b4ec3d90f2305aabaf5d0c648',
                 metadata: {
                     name: 'Lux PH Merchant',
                     description: 'Official Lux PH Merchant Dashboard',
@@ -167,13 +164,11 @@ class StellarWalletsKitAdapter implements WalletAdapter {
                     icons: ['https://stellar.org/favicon.ico']
                 }
             }),
-            new xBullModule() // xBull natively deep links without WalletConnect sometimes
+            new xBullModule(),
+            new FreighterModule(),
+            new LobstrModule(),
+            new AlbedoModule()
         ];
-
-        // 🚀 SMART ARRAY: Only add Freighter/Lobstr Desktop buttons if NOT on mobile!
-        const modules = isMobile
-            ? coreModules
-            : [...coreModules, new FreighterModule(), new LobstrModule(), new AlbedoModule()];
 
         if (!this.initialized) {
             StellarWalletsKit.init({
@@ -187,7 +182,7 @@ class StellarWalletsKitAdapter implements WalletAdapter {
 
         StellarWalletsKit.setNetwork(network);
     }
-
+    
     isAvailable(): boolean {
         return typeof window !== 'undefined';
     }
