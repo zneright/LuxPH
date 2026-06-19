@@ -130,13 +130,11 @@ class StellarWalletsKitAdapter implements WalletAdapter {
                     backdrop-filter: blur(6px) !important;
                 }
 
-                /* 🚀 CRITICAL FIX: Pull the WalletConnect Modal ABOVE everything else! */
                 wcm-modal, w3m-modal {
                     z-index: 2147483647 !important;
                     position: relative;
                 }
 
-                /* Mobile Bottom Sheet Override */
                 @media (max-width: 768px) {
                     #stellar-wallets-kit-modal-root {
                         align-items: flex-end !important;
@@ -154,7 +152,6 @@ class StellarWalletsKitAdapter implements WalletAdapter {
             document.head.appendChild(style);
         }
 
-        // 🚀 SMART FIX: Load all modules universally so Desktop and Mobile behave identically.
         const modules = [
             new WalletConnectModule({
                 projectId: '39a7791b4ec3d90f2305aabaf5d0c648',
@@ -261,9 +258,10 @@ interface WalletContextType {
     walletName: string;
     availableAdapters: WalletAdapter[];
     connect: (adapterId?: string | any) => Promise<void>;
+    connectManual: (address: string) => void; // 🚀 ADDED FOR MOBILE MANUAL LINKING
     disconnect: () => void;
     signTx: (xdr: string, networkPassphrase: string) => Promise<string>;
-    signTxFallback: (xdr: string, networkPassphrase: string) => void; // 🚀 ADDED UNIVERSAL DEEP LINK FALLBACK
+    signTxFallback: (xdr: string, networkPassphrase: string) => void;
 }
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined);
@@ -327,6 +325,16 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
         }
     };
 
+    // 🚀 NEW: Instantly link wallet address for Mobile deep linking flow
+    const connectManual = (pubKey: string) => {
+        setAddress(pubKey);
+        setActiveAdapterId('mobile-deep-link');
+        setWalletName('Mobile Wallet App');
+        localStorage.setItem('wallet_address', pubKey);
+        localStorage.setItem('wallet_adapter', 'mobile-deep-link');
+        localStorage.setItem('wallet_actual_name', 'Mobile Wallet App');
+    };
+
     const disconnect = async () => {
         const adapter = getActiveAdapter();
         if (adapter) await adapter.disconnect();
@@ -346,7 +354,7 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
         return await adapter.signTransaction(xdr, networkPassphrase);
     };
 
-    // 🚀 NEW FALLBACK: Force opens the native wallet app on the device via URI Deep Link!
+    // 🚀 UNIVERSAL DEEP LINK: Used by Mobile to throw signature requests natively to the app!
     const signTxFallback = (xdr: string, networkPassphrase: string) => {
         const url = `web+stellar:tx?xdr=${encodeURIComponent(xdr)}&network_passphrase=${encodeURIComponent(networkPassphrase)}`;
         window.open(url, '_self');
@@ -360,9 +368,10 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
             walletName,
             availableAdapters: ADAPTERS,
             connect,
+            connectManual,
             disconnect,
             signTx,
-            signTxFallback // Exported for use in your components!
+            signTxFallback
         }}>
             {children}
         </WalletContext.Provider>

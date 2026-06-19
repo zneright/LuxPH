@@ -19,7 +19,6 @@ interface MerchantData {
 // 🚀 Helper to convert the exact AnimatedLogo SVG into an Image for Canvas
 const generateLuxLogoImage = (): Promise<HTMLImageElement> => {
   return new Promise((resolve, reject) => {
-    // Note: '#' is encoded as '%23' for the data URI
     const svg = `
       <svg width="240" height="240" viewBox="0 0 240 240" fill="none" xmlns="http://www.w3.org/2000/svg">
         <defs>
@@ -53,6 +52,7 @@ export default function Settings() {
     walletName,
     isConnecting,
     connect: connectWalletAdapter,
+    connectManual,
     disconnect: disconnectWalletAdapter
   } = useWallet();
 
@@ -60,6 +60,7 @@ export default function Settings() {
   const [isSubscribed, setIsSubscribed] = useState<boolean>(false);
   const [freeTierLimit, setFreeTierLimit] = useState<number>(100000);
   const [isGeneratingStandee, setIsGeneratingStandee] = useState(false);
+  const [mobileAddressInput, setMobileAddressInput] = useState("");
 
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth <= 768);
@@ -134,11 +135,18 @@ export default function Settings() {
 
   const connectWallet = async () => await connectWalletAdapter('stellar-wallets-kit');
 
+  const handleMobileManualConnect = () => {
+    if (mobileAddressInput && mobileAddressInput.startsWith('G') && mobileAddressInput.length === 56) {
+      connectManual(mobileAddressInput);
+    } else {
+      alert("Please enter a valid Stellar Public Key starting with 'G'.");
+    }
+  };
+
   const disconnectWallet = async () => {
     await disconnectWalletAdapter();
     setStellarAddress("");
     if (user) {
-      // 🚀 Completely removes the fields from Firebase
       await updateDoc(doc(db, "merchants", user.uid), {
         stellarPublicKey: deleteField(),
         encryptedSecretKey: deleteField(),
@@ -202,7 +210,6 @@ export default function Settings() {
 
       const bName = merchantData?.businessName || "Store";
 
-      // 🚀 Auto-shrink font until it fits inside the Standee Width (max 700px)
       let fontSize = 56;
       ctx.font = `bold ${fontSize}px Arial`;
       while (ctx.measureText(bName).width > 700 && fontSize > 24) {
@@ -238,7 +245,7 @@ export default function Settings() {
       // 7. Draw the Logo smack in the middle of the QR Code!
       ctx.fillStyle = "#ffffff";
       ctx.beginPath();
-      ctx.arc(400, 760, 50, 0, 2 * Math.PI); // Center X: 400, Center Y: 760
+      ctx.arc(400, 760, 50, 0, 2 * Math.PI);
       ctx.fill();
       ctx.drawImage(logoImg, 355, 715, 90, 90);
 
@@ -372,7 +379,6 @@ export default function Settings() {
 
         /* =========================================================================
            NUCLEAR OVERRIDES: FORCES WALLET MODAL TO CENTER / OVERLAY
-           (Moved here from MerchantLayout)
            ========================================================================= */
         stellar-wallets-modal,
         #stellar-wallets-kit-modal-root,
@@ -387,7 +393,6 @@ export default function Settings() {
             right: auto !important;
         }
 
-        /* Dark blur behind the modal so it pops in light mode */
         stellar-wallets-modal::part(overlay) {
             position: fixed !important;
             top: 0 !important;
@@ -398,7 +403,6 @@ export default function Settings() {
             backdrop-filter: blur(4px) !important;
         }
 
-        /* Mobile specific bottom-sheet styling */
         @media (max-width: 768px) {
           stellar-wallets-modal,
           #stellar-wallets-kit-modal-root,
@@ -416,7 +420,6 @@ export default function Settings() {
 
       {/* Hidden QR for Canvas extraction */}
       <div style={{ display: "none" }}>
-        {/* We use level="H" (High Error Correction) so the QR still works even with a logo covering the center */}
         <QRCodeCanvas id="hidden-qr-canvas" value={offlineUri} size={400} level="H" />
       </div>
 
@@ -471,7 +474,28 @@ export default function Settings() {
                 <button onClick={disconnectWallet} className="bento-btn-danger">Disconnect Wallet</button>
               </div>
             </div>
+          ) : isMobile ? (
+            // 🚀 COMPLETELY DIFFERENT MOBILE CONNECTION
+            <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+              <h2 style={{ fontSize: 22, fontWeight: 900, color: "#111827", margin: "0 0 8px 0", fontFamily: "'Nunito', sans-serif" }}>Mobile Link</h2>
+              <p style={{ fontSize: 14, color: "#6b7280", margin: "0 0 24px 0", lineHeight: 1.5 }}>
+                Skip the complex handshake! Enter your Public Key below. We will seamlessly send signature requests directly to your installed app (Lobstr, Freighter, etc.) to approve.
+              </p>
+
+              <input
+                placeholder="G..."
+                value={mobileAddressInput}
+                onChange={(e) => setMobileAddressInput(e.target.value)}
+                className="bento-input"
+                style={{ marginBottom: 16 }}
+              />
+
+              <button onClick={handleMobileManualConnect} className="bento-btn-primary" style={{ marginBottom: 20 }}>
+                Link Address & Use App Requests
+              </button>
+            </div>
           ) : (
+            // DESKTOP CONNECTION
             <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
               <h2 style={{ fontSize: 22, fontWeight: 900, color: "#111827", margin: "0 0 8px 0", fontFamily: "'Nunito', sans-serif" }}>App Required</h2>
               <p style={{ fontSize: 14, color: "#6b7280", margin: "0 0 24px 0", lineHeight: 1.5 }}>Link your wallet to generate physical QRs and interact with the ledger.</p>
