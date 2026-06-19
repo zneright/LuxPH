@@ -1,3 +1,4 @@
+// C:\Users\Renz Jericho Buday\LuxPH\lux-ph\src\contexts\WalletContext.tsx
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { StellarWalletsKit, Networks as StellarKitNetworks } from '@creit.tech/stellar-wallets-kit';
 import { AlbedoModule } from '@creit.tech/stellar-wallets-kit/modules/albedo';
@@ -182,7 +183,7 @@ class StellarWalletsKitAdapter implements WalletAdapter {
 
         StellarWalletsKit.setNetwork(network);
     }
-    
+
     isAvailable(): boolean {
         return typeof window !== 'undefined';
     }
@@ -262,6 +263,7 @@ interface WalletContextType {
     connect: (adapterId?: string | any) => Promise<void>;
     disconnect: () => void;
     signTx: (xdr: string, networkPassphrase: string) => Promise<string>;
+    signTxFallback: (xdr: string, networkPassphrase: string) => void; // 🚀 ADDED UNIVERSAL DEEP LINK FALLBACK
 }
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined);
@@ -294,7 +296,7 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
     };
 
     const connect = async (adapterInput?: string | any) => {
-        const targetAdapterId = typeof adapterInput === 'string' ? adapterInput : 'freighter';
+        const targetAdapterId = typeof adapterInput === 'string' ? adapterInput : 'stellar-wallets-kit';
         const networkKit = networkConfig.networkPassphrase === Networks.PUBLIC ? StellarKitNetworks.PUBLIC : StellarKitNetworks.TESTNET;
 
         setIsConnecting(true);
@@ -344,6 +346,12 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
         return await adapter.signTransaction(xdr, networkPassphrase);
     };
 
+    // 🚀 NEW FALLBACK: Force opens the native wallet app on the device via URI Deep Link!
+    const signTxFallback = (xdr: string, networkPassphrase: string) => {
+        const url = `web+stellar:tx?xdr=${encodeURIComponent(xdr)}&network_passphrase=${encodeURIComponent(networkPassphrase)}`;
+        window.open(url, '_self');
+    };
+
     return (
         <WalletContext.Provider value={{
             address,
@@ -353,7 +361,8 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
             availableAdapters: ADAPTERS,
             connect,
             disconnect,
-            signTx
+            signTx,
+            signTxFallback // Exported for use in your components!
         }}>
             {children}
         </WalletContext.Provider>
