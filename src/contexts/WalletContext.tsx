@@ -1,18 +1,11 @@
-// C:\Users\Renz Jericho Buday\LuxPH\lux-ph\src\contexts\WalletContext.tsx
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { StellarWalletsKit, Networks as StellarKitNetworks } from '@creit.tech/stellar-wallets-kit';
-import { AlbedoModule } from '@creit.tech/stellar-wallets-kit/modules/albedo';
 import { FreighterModule } from '@creit.tech/stellar-wallets-kit/modules/freighter';
 import { LobstrModule } from '@creit.tech/stellar-wallets-kit/modules/lobstr';
-import { xBullModule } from '@creit.tech/stellar-wallets-kit/modules/xbull';
+// 🚀 WALLETCONNECT RESTORED: This is the ONLY way to get the "Approve Connection" popup in Lobstr on mobile web.
 import { WalletConnectModule } from '@creit.tech/stellar-wallets-kit/modules/wallet-connect';
 import { Networks } from '@stellar/stellar-sdk';
 import { useNetwork } from './NetworkContext';
-
-// ==========================================
-// 1. ADAPTER ABSTRACTION INTERFACES
-// ==========================================
-export type NetworkType = 'PUBLIC' | 'TESTNET' | 'FUTURENET';
 
 export interface WalletAdapter {
     id: string;
@@ -23,66 +16,6 @@ export interface WalletAdapter {
     signTransaction(xdr: string, networkPassphrase: string): Promise<string>;
 }
 
-// ==========================================
-// 2. FREIGHTER ADAPTER IMPLEMENTATION
-// ==========================================
-class FreighterAdapter implements WalletAdapter {
-    id = 'freighter';
-    name = 'Freighter';
-
-    isAvailable(): boolean {
-        if (typeof window === 'undefined') return false;
-        return !!(window as any).freighter;
-    }
-
-    async connect(): Promise<{ address: string; name: string }> {
-        if (!this.isAvailable()) throw new Error('Freighter is not installed.');
-
-        const { requestAccess } = await import('@stellar/freighter-api');
-        const access = await requestAccess();
-
-        if (access.error) throw new Error(access.error);
-        return { address: access.address, name: "freighter" };
-    }
-
-    async disconnect(): Promise<void> {
-        return Promise.resolve();
-    }
-
-    async signTransaction(xdr: string, networkPassphrase: string): Promise<string> {
-        const network = networkPassphrase.includes("Public") ? StellarKitNetworks.PUBLIC : StellarKitNetworks.TESTNET;
-        this.initializeKit(network);
-
-        try {
-            const response = await StellarWalletsKit.signTransaction(xdr, { networkPassphrase });
-
-            if (!response) throw new Error('Transaction signing failed or was cancelled.');
-
-            return typeof response === 'string'
-                ? response
-                : (response as any).signedTxXdr || (response as any).signedTransaction || '';
-        } catch (error: any) {
-            if (error?.message === 'The connection key is missing' || error?.code === -1) {
-                throw new Error("Your secure wallet session expired after a page refresh. Please Disconnect and Reconnect your wallet to continue.");
-            }
-            if (error && typeof error === 'object' && !error.message) {
-                throw new Error(`Wallet Error: ${JSON.stringify(error)}`);
-            }
-            throw error;
-        }
-    }
-
-    private initializeKit(network: StellarKitNetworks) {
-        if (!document.getElementById('swk-global-modal-fix')) {
-            const style = document.createElement('style');
-            style.id = 'swk-global-modal-fix';
-            style.innerHTML = `#stellar-wallets-kit-modal-root { display: none; }`;
-            document.head.appendChild(style);
-        }
-        StellarWalletsKit.init({ modules: [new FreighterModule()], network, authModal: { showInstallLabel: true, hideUnsupportedWallets: false } });
-    }
-}
-
 class StellarWalletsKitAdapter implements WalletAdapter {
     id = 'stellar-wallets-kit';
     name = 'Stellar Wallets Kit';
@@ -91,70 +24,39 @@ class StellarWalletsKitAdapter implements WalletAdapter {
     private initializeKit(network: StellarKitNetworks = StellarKitNetworks.TESTNET) {
         if (typeof window === 'undefined') return;
 
+        // Ensure the modal overlays perfectly on mobile
         if (!document.getElementById('swk-global-modal-fix')) {
             const style = document.createElement('style');
             style.id = 'swk-global-modal-fix';
-
             style.innerHTML = `
-                /* Absolute top layer containment */
                 #stellar-wallets-kit-modal-root {
-                    position: fixed !important;
-                    top: 0 !important;
-                    left: 0 !important;
-                    width: 100vw !important;
-                    height: 100vh !important;
-                    z-index: 9999999 !important;
-                    display: flex !important;
-                    align-items: center !important;
-                    justify-content: center !important;
+                    position: fixed !important; top: 0 !important; left: 0 !important;
+                    width: 100vw !important; height: 100vh !important;
+                    z-index: 9999999 !important; display: flex !important;
+                    align-items: center !important; justify-content: center !important;
                 }
-
-                /* Center the Web Component */
                 stellar-wallets-modal {
-                    position: relative !important;
-                    top: auto !important;
-                    left: auto !important;
-                    transform: none !important;
-                    z-index: 10000000 !important;
-                    pointer-events: auto !important;
+                    position: relative !important; top: auto !important; left: auto !important;
+                    transform: none !important; z-index: 10000000 !important; pointer-events: auto !important;
                 }
-
-                /* Dark blur overlay */
                 stellar-wallets-modal::part(overlay) {
-                    position: fixed !important;
-                    top: 0 !important;
-                    left: 0 !important;
-                    width: 100vw !important;
-                    height: 100vh !important;
-                    background: rgba(0, 0, 0, 0.4) !important;
-                    backdrop-filter: blur(6px) !important;
+                    position: fixed !important; top: 0 !important; left: 0 !important;
+                    width: 100vw !important; height: 100vh !important;
+                    background: rgba(0, 0, 0, 0.5) !important; backdrop-filter: blur(4px) !important;
                 }
-
-                wcm-modal, w3m-modal {
-                    z-index: 2147483647 !important;
-                    position: relative;
-                }
-
+                wcm-modal, w3m-modal { z-index: 2147483647 !important; position: relative; }
                 @media (max-width: 768px) {
-                    #stellar-wallets-kit-modal-root {
-                        align-items: flex-end !important;
-                        padding-bottom: env(safe-area-inset-bottom) !important;
-                    }
-                    stellar-wallets-modal {
-                        width: 100% !important;
-                        max-width: 100vw !important;
-                        margin: 0 !important;
-                        border-bottom-left-radius: 0 !important;
-                        border-bottom-right-radius: 0 !important;
-                    }
+                    #stellar-wallets-kit-modal-root { align-items: flex-end !important; padding-bottom: env(safe-area-inset-bottom) !important; }
+                    stellar-wallets-modal { width: 100% !important; max-width: 100vw !important; margin: 0 !important; border-radius: 24px 24px 0 0 !important; }
                 }
             `;
             document.head.appendChild(style);
         }
 
+        // xBull removed. WalletConnect active for mobile app approvals.
         const modules = [
             new WalletConnectModule({
-                projectId: '39a7791b4ec3d90f2305aabaf5d0c648',
+                projectId: '6c527328e4624dc4f1573f3c62b3833d',
                 metadata: {
                     name: 'Lux PH Merchant',
                     description: 'Official Lux PH Merchant Dashboard',
@@ -162,10 +64,8 @@ class StellarWalletsKitAdapter implements WalletAdapter {
                     icons: ['https://stellar.org/favicon.ico']
                 }
             }),
-            new xBullModule(),
             new FreighterModule(),
-            new LobstrModule(),
-            new AlbedoModule()
+            new LobstrModule()
         ];
 
         if (!this.initialized) {
@@ -181,44 +81,15 @@ class StellarWalletsKitAdapter implements WalletAdapter {
         StellarWalletsKit.setNetwork(network);
     }
 
-    isAvailable(): boolean {
-        return typeof window !== 'undefined';
-    }
+    isAvailable(): boolean { return typeof window !== 'undefined'; }
 
     async connect(network: StellarKitNetworks = StellarKitNetworks.TESTNET): Promise<{ address: string; name: string }> {
         this.initializeKit(network);
         const result: any = await StellarWalletsKit.authModal({ container: document.body });
 
-        if (!result || !result.address) {
-            throw new Error('Wallet connection was cancelled or failed.');
-        }
+        if (!result || !result.address) throw new Error('Wallet connection was cancelled.');
 
-        let actualWalletName = 'Secured Wallet';
-
-        if (result.walletId) actualWalletName = result.walletId;
-        else if (result.wallet) actualWalletName = result.wallet;
-        else if (result.id) actualWalletName = result.id;
-        else if (result.name) actualWalletName = result.name;
-
-        if (actualWalletName === 'Secured Wallet') {
-            try {
-                const lsWallet = localStorage.getItem('stellarWalletsKit');
-                const lsSwk = localStorage.getItem('swk:active-wallet');
-
-                const activeLs = lsSwk || lsWallet;
-                if (activeLs) {
-                    if (activeLs.includes('{')) {
-                        const parsed = JSON.parse(activeLs);
-                        actualWalletName = parsed.id || parsed.name || parsed.activeWallet || 'Secured Wallet';
-                    } else {
-                        actualWalletName = activeLs;
-                    }
-                }
-            } catch (e) {
-                // Ignore parse errors silently
-            }
-        }
-
+        let actualWalletName = result.walletId || result.wallet || result.id || result.name || 'Secured Wallet';
         return { address: result.address, name: actualWalletName };
     }
 
@@ -233,146 +104,74 @@ class StellarWalletsKitAdapter implements WalletAdapter {
 
         try {
             const response = await StellarWalletsKit.signTransaction(xdr, { networkPassphrase });
-
             if (!response) throw new Error('Transaction signing failed or was cancelled.');
-
-            return typeof response === 'string'
-                ? response
-                : (response as any).signedTxXdr || (response as any).signedTransaction || '';
+            return typeof response === 'string' ? response : (response as any).signedTxXdr || (response as any).signedTransaction || '';
         } catch (error: any) {
-            if (error && typeof error === 'object' && !error.message) {
-                throw new Error(`Wallet Error: ${JSON.stringify(error)}`);
-            }
+            if (error && typeof error === 'object' && !error.message) throw new Error(`Wallet Error: ${JSON.stringify(error)}`);
             throw error;
         }
     }
 }
 
-// ==========================================
-// 3. REACT CONTEXT PROVIDER
-// ==========================================
 interface WalletContextType {
     address: string;
     isConnecting: boolean;
-    activeAdapterId: string | null;
     walletName: string;
-    availableAdapters: WalletAdapter[];
-    connect: (adapterId?: string | any) => Promise<void>;
-    connectManual: (address: string) => void; // 🚀 ADDED FOR MOBILE MANUAL LINKING
+    connect: () => Promise<void>;
     disconnect: () => void;
     signTx: (xdr: string, networkPassphrase: string) => Promise<string>;
-    signTxFallback: (xdr: string, networkPassphrase: string) => void;
 }
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined);
-
-const ADAPTERS: WalletAdapter[] = [
-    new StellarWalletsKitAdapter(),
-    new FreighterAdapter()
-];
+const adapter = new StellarWalletsKitAdapter();
 
 export const WalletProvider = ({ children }: { children: ReactNode }) => {
     const { networkConfig } = useNetwork();
     const [address, setAddress] = useState<string>('');
     const [isConnecting, setIsConnecting] = useState(false);
-    const [activeAdapterId, setActiveAdapterId] = useState<string | null>(null);
     const [walletName, setWalletName] = useState<string>('');
 
     useEffect(() => {
         const savedAddress = localStorage.getItem('wallet_address');
-        const savedAdapter = localStorage.getItem('wallet_adapter');
         const savedName = localStorage.getItem('wallet_actual_name');
-        if (savedAddress && savedAdapter) {
+        if (savedAddress) {
             setAddress(savedAddress);
-            setActiveAdapterId(savedAdapter);
             if (savedName) setWalletName(savedName);
         }
     }, []);
 
-    const getActiveAdapter = (): WalletAdapter | undefined => {
-        return ADAPTERS.find(a => a.id === activeAdapterId);
-    };
-
-    const connect = async (adapterInput?: string | any) => {
-        const targetAdapterId = typeof adapterInput === 'string' ? adapterInput : 'stellar-wallets-kit';
+    const connect = async () => {
         const networkKit = networkConfig.networkPassphrase === Networks.PUBLIC ? StellarKitNetworks.PUBLIC : StellarKitNetworks.TESTNET;
-
         setIsConnecting(true);
         try {
-            const adapter = ADAPTERS.find(a => a.id === targetAdapterId);
-            if (!adapter) throw new Error(`Wallet adapter '${targetAdapterId}' not found.`);
-
-            if (!adapter.isAvailable()) {
-                throw new Error(`${adapter.name} is not installed on this browser.`);
-            }
-
             const { address: pubKey, name: actualName } = await adapter.connect(networkKit);
-
             setAddress(pubKey);
-            setActiveAdapterId(targetAdapterId);
             setWalletName(actualName);
-
             localStorage.setItem('wallet_address', pubKey);
-            localStorage.setItem('wallet_adapter', targetAdapterId);
             localStorage.setItem('wallet_actual_name', actualName);
         } catch (error: any) {
             console.error('Wallet connection failed:', error);
-            if (error.message && !error.message.includes('cancelled')) {
-                alert(error.message);
-            }
+            if (error.message && !error.message.includes('cancelled')) alert(error.message);
         } finally {
             setIsConnecting(false);
         }
     };
 
-    // 🚀 NEW: Instantly link wallet address for Mobile deep linking flow
-    const connectManual = (pubKey: string) => {
-        setAddress(pubKey);
-        setActiveAdapterId('mobile-deep-link');
-        setWalletName('Mobile Wallet App');
-        localStorage.setItem('wallet_address', pubKey);
-        localStorage.setItem('wallet_adapter', 'mobile-deep-link');
-        localStorage.setItem('wallet_actual_name', 'Mobile Wallet App');
-    };
-
     const disconnect = async () => {
-        const adapter = getActiveAdapter();
-        if (adapter) await adapter.disconnect();
-
+        await adapter.disconnect();
         setAddress('');
-        setActiveAdapterId(null);
         setWalletName('');
         localStorage.removeItem('wallet_address');
-        localStorage.removeItem('wallet_adapter');
         localStorage.removeItem('wallet_actual_name');
     };
 
     const signTx = async (xdr: string, networkPassphrase: string): Promise<string> => {
-        const adapter = getActiveAdapter();
-        if (!adapter || !address) throw new Error('No active wallet session. Please disconnect and reconnect your app.');
-
+        if (!address) throw new Error('No active wallet session. Please disconnect and reconnect your app.');
         return await adapter.signTransaction(xdr, networkPassphrase);
     };
 
-    // 🚀 UNIVERSAL DEEP LINK: Used by Mobile to throw signature requests natively to the app!
-    const signTxFallback = (xdr: string, networkPassphrase: string) => {
-        const url = `web+stellar:tx?xdr=${encodeURIComponent(xdr)}&network_passphrase=${encodeURIComponent(networkPassphrase)}`;
-        window.open(url, '_self');
-    };
-
     return (
-        <WalletContext.Provider value={{
-            address,
-            isConnecting,
-            activeAdapterId,
-            walletName,
-            availableAdapters: ADAPTERS,
-            connect,
-            connectManual,
-            disconnect,
-            signTx,
-            signTxFallback
-        }}>
+        <WalletContext.Provider value={{ address, isConnecting, walletName, connect, disconnect, signTx }}>
             {children}
         </WalletContext.Provider>
     );

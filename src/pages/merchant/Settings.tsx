@@ -1,4 +1,3 @@
-// C:\Users\Renz Jericho Buday\LuxPH\lux-ph\src\pages\merchant\Settings.tsx
 import React, { useState, useEffect } from 'react';
 import { auth, db } from '../../config/firebase';
 import { onAuthStateChanged, type User } from 'firebase/auth';
@@ -52,7 +51,6 @@ export default function Settings() {
     walletName,
     isConnecting,
     connect: connectWalletAdapter,
-    connectManual,
     disconnect: disconnectWalletAdapter
   } = useWallet();
 
@@ -60,7 +58,6 @@ export default function Settings() {
   const [isSubscribed, setIsSubscribed] = useState<boolean>(false);
   const [freeTierLimit, setFreeTierLimit] = useState<number>(100000);
   const [isGeneratingStandee, setIsGeneratingStandee] = useState(false);
-  const [mobileAddressInput, setMobileAddressInput] = useState("");
 
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth <= 768);
@@ -133,15 +130,7 @@ export default function Settings() {
     }
   }, [walletAddress, user, merchantData]);
 
-  const connectWallet = async () => await connectWalletAdapter('stellar-wallets-kit');
-
-  const handleMobileManualConnect = () => {
-    if (mobileAddressInput && mobileAddressInput.startsWith('G') && mobileAddressInput.length === 56) {
-      connectManual(mobileAddressInput);
-    } else {
-      alert("Please enter a valid Stellar Public Key starting with 'G'.");
-    }
-  };
+  const connectWallet = async () => await connectWalletAdapter();
 
   const disconnectWallet = async () => {
     await disconnectWalletAdapter();
@@ -158,15 +147,23 @@ export default function Settings() {
 
   const getWalletDisplayName = () => {
     const rawName = (walletName || "App").toLowerCase();
-    if (rawName.includes("lobstr")) return "Lobstr Vault";
+    if (rawName.includes("lobstr") || rawName.includes("walletconnect")) return "Lobstr Vault (WalletConnect)";
     if (rawName.includes("freighter")) return "Freighter";
-    if (rawName.includes("xbull")) return "xBull Wallet";
     return rawName.charAt(0).toUpperCase() + rawName.slice(1);
   };
 
   const offlineUri = stellarAddress ? `web+stellar:pay?destination=${stellarAddress}&memo=OFFLINE-QR&memo_type=text` : "";
 
-  // 🚀 STANDEE GENERATOR: Dynamic Font Sizing & Logo Overlay
+  // 🚀 RAW SVG STRING for the QR Center Logo
+  const luxLogoSvgString = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(`
+    <svg width="240" height="240" viewBox="0 0 240 240" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="44" y="24" width="64" height="64" rx="20" fill="#22C55E" />
+      <rect x="154" y="146" width="64" height="64" rx="20" fill="#3B82F6" />
+      <path d="M76 42V134 C76 160 94 178 120 178H186" stroke="#8B5CF6" stroke-width="22" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+  `);
+
+  // 🚀 PURE CANVAS 2D STANDEE GENERATOR
   const handleDownloadStandee = async () => {
     setIsGeneratingStandee(true);
     try {
@@ -177,11 +174,11 @@ export default function Settings() {
 
       const canvas = document.createElement("canvas");
       canvas.width = 800;
-      canvas.height = 1200;
+      canvas.height = 1200; // Standee aspect ratio
       const ctx = canvas.getContext("2d");
       if (!ctx) throw new Error("Canvas context failed");
 
-      // 1. Clean White Background
+      // 1. Draw Clean White Background
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(0, 0, 800, 1200);
 
@@ -197,6 +194,7 @@ export default function Settings() {
       ctx.quadraticCurveTo(400, 300, 0, 200);
       ctx.fill();
 
+      // 3. Draw Header Details
       ctx.fillStyle = "#ffffff";
       ctx.font = "bold 40px Arial";
       ctx.textAlign = "center";
@@ -209,14 +207,12 @@ export default function Settings() {
       ctx.fillText("OFFICIAL MERCHANT", 400, 320);
 
       const bName = merchantData?.businessName || "Store";
-
       let fontSize = 56;
       ctx.font = `bold ${fontSize}px Arial`;
       while (ctx.measureText(bName).width > 700 && fontSize > 24) {
         fontSize -= 2;
         ctx.font = `bold ${fontSize}px Arial`;
       }
-
       ctx.fillStyle = "#111827";
       ctx.fillText(bName, 400, 390);
 
@@ -234,28 +230,20 @@ export default function Settings() {
       ctx.roundRect(160, 520, 480, 480, 40);
       ctx.fill();
       ctx.shadowColor = "transparent";
-
       ctx.strokeStyle = "#f3f4f6";
       ctx.lineWidth = 4;
       ctx.stroke();
 
-      // 6. Draw Actual QR Code
+      // 6. Draw Actual QR Code with Logo
       ctx.drawImage(qrCanvas, 200, 560, 400, 400);
 
-      // 7. Draw the Logo smack in the middle of the QR Code!
-      ctx.fillStyle = "#ffffff";
-      ctx.beginPath();
-      ctx.arc(400, 760, 50, 0, 2 * Math.PI);
-      ctx.fill();
-      ctx.drawImage(logoImg, 355, 715, 90, 90);
-
-      // 8. Footer Meta
+      // 7. Footer Meta
       ctx.fillStyle = "#9ca3af";
       ctx.font = "bold 20px monospace";
       ctx.letterSpacing = "1px";
       ctx.fillText("NETWORK REF: OFFLINE-QR", 400, 1100);
 
-      // 9. Trigger Download
+      // 8. Trigger Download
       const link = document.createElement("a");
       link.download = `LuxPH_Standee_${bName.replace(/\s+/g, '_')}.png`;
       link.href = canvas.toDataURL("image/png");
@@ -268,274 +256,159 @@ export default function Settings() {
     }
   };
 
-  const bentoVariants = {
+  const containerVariants = {
     hidden: { opacity: 0 },
     show: { opacity: 1, transition: { staggerChildren: 0.1 } }
   };
 
-  const cardVariants = {
-    hidden: { opacity: 0, scale: 0.95, y: 15 },
-    show: { opacity: 1, scale: 1, y: 0, transition: { type: "spring", stiffness: 300, damping: 24 } }
+  const itemVariants = {
+    hidden: { opacity: 0, y: 15 },
+    show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 300, damping: 24 } }
   };
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ padding: "16px", maxWidth: 1000, margin: "0 auto", boxSizing: "border-box" }}>
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ padding: "16px 8px", maxWidth: 840, margin: "0 auto", boxSizing: "border-box" }}>
 
       <style>{`
-        /* 🚀 Fully Responsive Bento Grid */
-        .bento-header { margin-bottom: 24px; padding-left: 8px; }
-        .bento-header h1 { font-size: clamp(28px, 4vw, 36px); font-weight: 900; color: #111827; margin: 0 0 4px 0; font-family: 'Nunito', sans-serif; letter-spacing: -0.02em; }
-        .bento-header p { color: #6b7280; font-size: 15px; margin: 0; font-weight: 500; }
-
-        .bento-grid {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 20px;
-        }
+        .st-header-block { margin-bottom: 24px; padding: 0 8px; }
+        .st-header-block h1 { font-size: clamp(28px, 5vw, 36px); font-weight: 900; color: #111827; margin: 0 0 6px 0; font-family: 'Nunito', sans-serif; letter-spacing: -0.02em; }
+        .st-header-block p { color: #6b7280; font-size: 15px; margin: 0; font-weight: 500; line-height: 1.5; }
         
-        @media (min-width: 768px) {
-            .bento-grid { grid-template-columns: repeat(2, 1fr); gap: 24px; }
-            .col-span-2 { grid-column: span 2; }
-        }
+        .st-layout-stack { display: flex; flex-direction: column; gap: 24px; }
 
-        .bento-card {
-            background: #ffffff;
-            border: 1px solid #e5e7eb;
-            border-radius: 32px;
-            padding: 28px;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.02);
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            display: flex;
-            flex-direction: column;
-            position: relative;
-            overflow: hidden;
-            box-sizing: border-box;
-        }
-        .bento-card:hover {
-            box-shadow: 0 15px 35px -5px rgba(0,0,0,0.06);
-            border-color: #d1d5db;
-        }
+        .st-panel-card { background: #ffffff; border: 1px solid #e5e7eb; box-shadow: 0 4px 10px -2px rgba(0,0,0,0.03); border-radius: 24px; overflow: hidden; display: flex; flex-direction: column; transition: all 0.3s; }
+        .st-panel-card:hover { box-shadow: 0 10px 25px -5px rgba(0,0,0,0.06); border-color: #d1d5db; }
+        
+        .st-card-header { padding: 20px 24px; border-bottom: 1px solid #f3f4f6; font-size: 14px; font-weight: 800; color: #111827; background: #fafafa; text-transform: uppercase; letter-spacing: 0.05em; font-family: 'DM Mono', monospace; display: flex; align-items: center; gap: 8px; }
+        .st-card-body { padding: 24px; display: flex; flex-direction: column; }
+        
+        .st-input { width: 100%; background: #f9fafb; border: 1px solid #d1d5db; border-radius: 16px; padding: 16px 20px; color: #111827; font-size: 15px; outline: none; box-sizing: border-box; font-family: 'DM Mono', monospace; font-weight: 600; transition: all 0.2s; }
+        .st-input:focus { border-color: #8b5cf6; background: #ffffff; box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.1); }
+        
+        .st-btn-primary { background: linear-gradient(135deg, #111827, #374151); color: #fff; border: none; border-radius: 16px; padding: 18px 24px; font-size: 15px; font-weight: 800; cursor: pointer; font-family: 'Nunito', sans-serif; display: inline-flex; align-items: center; justify-content: center; gap: 8px; transition: all 0.2s; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 100%; box-sizing: border-box; }
+        .st-btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,0.2); }
+        .st-btn-primary:active { transform: scale(0.97); }
+        
+        .st-btn-danger { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; border-radius: 16px; padding: 16px 24px; font-size: 15px; font-weight: 800; cursor: pointer; font-family: 'Nunito', sans-serif; transition: all 0.2s; width: 100%; box-sizing: border-box;}
+        .st-btn-danger:hover { background: #fee2e2; border-color: #fca5a5; }
 
-        /* Gradient Overlays for aesthetics */
-        .bento-gradient-top { position: absolute; top: 0; left: 0; right: 0; height: 6px; background: linear-gradient(90deg, #3b82f6, #8b5cf6); }
-        .bento-gradient-green { background: linear-gradient(90deg, #10b981, #059669); }
-
-        .bento-title { font-size: 16px; font-weight: 800; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.05em; font-family: 'DM Mono', monospace; margin-bottom: 24px; display: flex; align-items: center; gap: 8px; }
-
-        /* Inputs & Buttons */
-        .bento-input { width: 100%; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 16px; padding: 16px 20px; color: #111827; font-size: 15px; outline: none; font-family: 'DM Mono', monospace; font-weight: 700; transition: border 0.2s; box-sizing: border-box; }
-        .bento-input:focus { border-color: #8b5cf6; background: #fff; }
-
-        .bento-btn-primary { background: linear-gradient(135deg, #111827, #374151); color: #fff; border: none; border-radius: 16px; padding: 18px 24px; font-size: 15px; font-weight: 800; cursor: pointer; font-family: 'Nunito', sans-serif; transition: all 0.2s; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 100%; display: flex; justify-content: center; align-items: center; gap: 8px; box-sizing: border-box; }
-        .bento-btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,0.2); }
-        .bento-btn-primary:active { transform: scale(0.97); }
-
-        .bento-btn-danger { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; border-radius: 16px; padding: 14px 20px; font-size: 14px; font-weight: 800; cursor: pointer; font-family: 'Nunito', sans-serif; transition: all 0.2s; width: 100%; box-sizing: border-box; }
-        .bento-btn-danger:hover { background: #fee2e2; }
-
-        .app-link { background: #f3f4f6; color: #374151; padding: 10px 16px; border-radius: 12px; font-size: 13px; font-weight: 800; text-decoration: none; border: 1px solid #e5e7eb; transition: all 0.2s; display: flex; flex: 1; justify-content: center; align-items: center; gap: 6px; box-sizing: border-box; white-space: nowrap; }
+        .app-link { background: #f3f4f6; color: #374151; padding: 12px 16px; border-radius: 12px; font-size: 14px; font-weight: 800; text-decoration: none; border: 1px solid #e5e7eb; transition: all 0.2s; display: inline-flex; justify-content: center; align-items: center; gap: 6px; flex: 1; }
         .app-link:hover { background: #e5e7eb; border-color: #d1d5db; }
-        
-        .identity-flex { display: flex; align-items: center; gap: 20px; margin-bottom: 24px; }
-        .identity-avatar { width: 72px; height: 72px; border-radius: 20px; background: linear-gradient(135deg,#8b5cf6,#6366f1); display: flex; align-items: center; justify-content: center; font-size: 32px; font-family: 'Nunito',sans-serif; font-weight: 900; color: #fff; flex-shrink: 0; box-shadow: 0 8px 20px rgba(139,92,246,0.3); }
-        .links-row { display: flex; gap: 8px; flex-wrap: wrap; width: 100%; margin-top: auto; }
-
-        /* 🚀 Mobile scattered fix / Non-bento style */
-        @media (max-width: 768px) {
-          .bento-grid { 
-            display: flex; 
-            flex-direction: column; 
-            gap: 0; 
-          }
-          .bento-card { 
-            padding: 24px 0; 
-            border: none; 
-            border-radius: 0; 
-            box-shadow: none; 
-            border-bottom: 1px solid #e5e7eb; 
-            background: transparent !important; 
-          }
-          .bento-card:last-child {
-            border-bottom: none;
-          }
-          .bento-gradient-top { display: none; }
-          
-          .identity-flex { flex-direction: row; align-items: center; gap: 16px; }
-          .identity-avatar { width: 56px; height: 56px; font-size: 24px; border-radius: 16px; }
-          
-          .standee-preview-container { 
-            width: 100%; 
-            max-width: 280px; 
-            margin: 24px auto 0 auto; 
-            transform: none !important; /* Disables rotation on mobile to save space */
-          }
-          
-          .standee-flex-row { flex-direction: column; text-align: center; }
-          .standee-flex-row button { justify-content: center; width: 100%; }
-          
-          .links-row { flex-direction: column; }
-          .app-link { width: 100%; }
-        }
-
-        /* =========================================================================
-           NUCLEAR OVERRIDES: FORCES WALLET MODAL TO CENTER / OVERLAY
-           ========================================================================= */
-        stellar-wallets-modal,
-        #stellar-wallets-kit-modal-root,
-        [id^="stellar-wallets-modal"] {
-            position: fixed !important;
-            top: 50% !important;
-            left: 50% !important;
-            transform: translate(-50%, -50%) !important;
-            z-index: 2147483647 !important;
-            margin: 0 !important;
-            bottom: auto !important;
-            right: auto !important;
-        }
-
-        stellar-wallets-modal::part(overlay) {
-            position: fixed !important;
-            top: 0 !important;
-            left: 0 !important;
-            width: 100vw !important;
-            height: 100vh !important;
-            background: rgba(0, 0, 0, 0.5) !important;
-            backdrop-filter: blur(4px) !important;
-        }
-
-        @media (max-width: 768px) {
-          stellar-wallets-modal,
-          #stellar-wallets-kit-modal-root,
-          [id^="stellar-wallets-modal"] {
-              top: auto !important;
-              bottom: 0 !important;
-              left: 50% !important;
-              transform: translate(-50%, 0) !important;
-              width: 100vw !important;
-              max-width: 100vw !important;
-              padding-bottom: env(safe-area-inset-bottom) !important;
-          }
-        }
       `}</style>
 
-      {/* Hidden QR for Canvas extraction */}
+      {/* Hidden QR for Canvas extraction WITH INTERNAL LOGO */}
       <div style={{ display: "none" }}>
-        <QRCodeCanvas id="hidden-qr-canvas" value={offlineUri} size={400} level="H" />
+        <QRCodeCanvas
+          id="hidden-qr-canvas"
+          value={offlineUri}
+          size={400}
+          level="H"
+          imageSettings={{ src: luxLogoSvgString, height: 100, width: 100, excavate: true }}
+        />
       </div>
 
-      <div className="bento-header">
-        <h1>Hub & Settings</h1>
-        <p>Your business identity, wallet connections, and physical store tools.</p>
-      </div>
+      <motion.div variants={containerVariants} initial="hidden" animate="show" className="st-layout-stack">
 
-      <motion.div variants={bentoVariants} initial="hidden" animate="show" className="bento-grid">
+        <motion.div variants={itemVariants} className="st-header-block">
+          <h1>Account Settings</h1>
+          <p>Manage your connections, download your offline QR, and view limits.</p>
+        </motion.div>
 
-        {/* 1. PROFILE IDENTITY (Span 1) */}
-        <motion.div variants={cardVariants} className="bento-card">
-          <div className="bento-gradient-top"></div>
-          <div className="bento-title">
+        {/* 1. Identity Profile */}
+        <motion.div variants={itemVariants} className="st-panel-card">
+          <div className="st-card-header">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-            Identity
+            Business Profile
           </div>
-
-          <div className="identity-flex">
-            <div className="identity-avatar">
-              {merchantData?.businessName ? merchantData.businessName.charAt(0).toUpperCase() : (user?.email ? user.email.charAt(0).toUpperCase() : "U")}
-            </div>
-            <div style={{ overflow: "hidden", flex: 1, width: "100%", textAlign: "left" }}>
-              <div style={{ fontSize: "clamp(20px, 5vw, 24px)", fontWeight: 900, fontFamily: "'Nunito',sans-serif", color: "#111827", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                {merchantData?.businessName || "Loading..."}
+          <div className="st-card-body">
+            <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 24 }}>
+              <div style={{ width: 64, height: 64, borderRadius: 20, background: "linear-gradient(135deg,#8b5cf6,#6366f1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 26, fontFamily: "'Nunito',sans-serif", fontWeight: 900, color: "#fff", flexShrink: 0, boxShadow: "0 8px 20px rgba(139,92,246,0.3)" }}>
+                {merchantData?.businessName ? merchantData.businessName.charAt(0).toUpperCase() : (user?.email ? user.email.charAt(0).toUpperCase() : "U")}
               </div>
-              <div style={{ fontSize: "14px", color: "#6b7280", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                {merchantData?.email || user?.email}
+              <div style={{ overflow: "hidden" }}>
+                <div style={{ fontSize: "clamp(20px, 4vw, 24px)", fontWeight: 900, fontFamily: "'Nunito',sans-serif", color: "#111827", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {merchantData?.businessName || "Loading..."}
+                </div>
+                <div style={{ fontSize: 14, color: "#6b7280", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {merchantData?.email || user?.email}
+                </div>
               </div>
             </div>
-          </div>
 
-          <div style={{ marginTop: "auto" }}>
-            <input type="email" readOnly value={merchantData?.email || user?.email || ""} className="bento-input" style={{ color: "#6b7280", background: "#f3f4f6" }} />
+            <div>
+              <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#6b7280", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8, fontWeight: 700 }}>Contact Email</div>
+              <input type="email" readOnly value={merchantData?.email || user?.email || ""} className="st-input" style={{ color: "#6b7280", background: "#f3f4f6" }} />
+            </div>
           </div>
         </motion.div>
 
-        {/* 2. WALLET CONNECTION (Span 1) */}
-        <motion.div variants={cardVariants} className="bento-card">
-          <div className="bento-title">
+        {/* 2. Wallet Connection */}
+        <motion.div variants={itemVariants} className="st-panel-card">
+          <div className="st-card-header">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
             Blockchain Link
           </div>
+          <div className="st-card-body">
+            {stellarAddress ? (
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                <div style={{ display: "inline-flex", alignSelf: "flex-start", alignItems: "center", gap: 8, padding: "8px 16px", background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 99, marginBottom: 24, fontSize: 13, color: "#065f46", fontWeight: 800 }}>
+                  ✓ Linked via {getWalletDisplayName()}
+                </div>
 
-          {stellarAddress ? (
-            <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-              <div style={{ display: "inline-flex", alignSelf: "flex-start", alignItems: "center", gap: 8, padding: "8px 16px", background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 99, marginBottom: 20, fontSize: 13, color: "#065f46", fontWeight: 800 }}>
-                ✓ Linked via {getWalletDisplayName()}
+                <div style={{ marginBottom: 24 }}>
+                  <div style={{ fontSize: 11, fontFamily: "'DM Mono',monospace", color: "#6b7280", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 10, fontWeight: 700 }}>Active Address</div>
+                  <input readOnly value={stellarAddress} className="st-input" />
+                </div>
+
+                <button type="button" onClick={disconnectWallet} className="st-btn-danger">
+                  Disconnect Wallet
+                </button>
               </div>
-              <input readOnly value={stellarAddress} className="bento-input" style={{ marginBottom: "auto" }} />
-              <div style={{ marginTop: 24 }}>
-                <button onClick={disconnectWallet} className="bento-btn-danger">Disconnect Wallet</button>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                <h2 style={{ fontSize: 22, fontWeight: 900, color: "#111827", margin: "0 0 8px 0", fontFamily: "'Nunito', sans-serif" }}>App Required</h2>
+                <p style={{ fontSize: 14, color: "#6b7280", margin: "0 0 24px 0", lineHeight: 1.5 }}>
+                  {isMobile ? "Tap Connect and select WalletConnect to link Lobstr or your preferred mobile wallet." : "Link your wallet to generate physical QRs and interact with the ledger."}
+                </p>
+                <button onClick={connectWallet} disabled={isConnecting} className="st-btn-primary" style={{ marginBottom: 24, background: isConnecting ? "#e5e7eb" : undefined, color: isConnecting ? "#9ca3af" : undefined, boxShadow: isConnecting ? "none" : undefined }}>
+                  {isConnecting ? <LoadingBadge text="Connecting..." variant="secure" /> : "Connect Wallet App"}
+                </button>
+
+                <div style={{ paddingTop: 20, borderTop: "1px solid #f3f4f6" }}>
+                  <p style={{ fontSize: 13, color: "#9ca3af", margin: "0 0 12px", fontWeight: 700 }}>Don't have a wallet extension yet?</p>
+                  <div style={{ display: "flex", gap: 12 }}>
+                    <a href="https://lobstr.co/" target="_blank" rel="noreferrer" className="app-link">🦀 Lobstr</a>
+                    <a href="https://freighter.app/" target="_blank" rel="noreferrer" className="app-link">⚓ Freighter</a>
+                  </div>
+                </div>
               </div>
-            </div>
-          ) : isMobile ? (
-            // 🚀 COMPLETELY DIFFERENT MOBILE CONNECTION
-            <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-              <h2 style={{ fontSize: 22, fontWeight: 900, color: "#111827", margin: "0 0 8px 0", fontFamily: "'Nunito', sans-serif" }}>Mobile Link</h2>
-              <p style={{ fontSize: 14, color: "#6b7280", margin: "0 0 24px 0", lineHeight: 1.5 }}>
-                Skip the complex handshake! Enter your Public Key below. We will seamlessly send signature requests directly to your installed app (Lobstr, Freighter, etc.) to approve.
-              </p>
-
-              <input
-                placeholder="G..."
-                value={mobileAddressInput}
-                onChange={(e) => setMobileAddressInput(e.target.value)}
-                className="bento-input"
-                style={{ marginBottom: 16 }}
-              />
-
-              <button onClick={handleMobileManualConnect} className="bento-btn-primary" style={{ marginBottom: 20 }}>
-                Link Address & Use App Requests
-              </button>
-            </div>
-          ) : (
-            // DESKTOP CONNECTION
-            <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-              <h2 style={{ fontSize: 22, fontWeight: 900, color: "#111827", margin: "0 0 8px 0", fontFamily: "'Nunito', sans-serif" }}>App Required</h2>
-              <p style={{ fontSize: 14, color: "#6b7280", margin: "0 0 24px 0", lineHeight: 1.5 }}>Link your wallet to generate physical QRs and interact with the ledger.</p>
-              <button onClick={connectWallet} disabled={isConnecting} className="bento-btn-primary" style={{ marginBottom: 20, background: isConnecting ? "#e5e7eb" : undefined, color: isConnecting ? "#9ca3af" : undefined, boxShadow: isConnecting ? "none" : undefined }}>
-                {isConnecting ? <LoadingBadge text="Connecting..." variant="secure" /> : "Connect Wallet App"}
-              </button>
-
-              <div className="links-row">
-                <a href="https://lobstr.co/" target="_blank" rel="noreferrer" className="app-link">🦀 Lobstr</a>
-                <a href="https://freighter.app/" target="_blank" rel="noreferrer" className="app-link">⚓ Freighter</a>
-              </div>
-            </div>
-          )}
+            )}
+          </div>
         </motion.div>
 
-        {/* 3. MONTHLY USAGE (Full Width) */}
-        <motion.div variants={cardVariants} className="col-span-2">
+        {/* 3. Monthly Usage */}
+        <motion.div variants={itemVariants}>
           <MonthlyUsageCard monthlyUsage={monthlyUsage} isSubscribed={isSubscribed} usageLimit={freeTierLimit} />
         </motion.div>
 
-        {/* 4. OFFLINE STANDEE STUDIO (Full Width) */}
+        {/* 4. Offline Standee Studio */}
         {stellarAddress && (
-          <motion.div variants={cardVariants} className="bento-card col-span-2" style={{ background: "linear-gradient(135deg, #f8fafc, #f1f5f9)", border: "1px solid #cbd5e1" }}>
-            <div className="bento-gradient-top bento-gradient-green"></div>
-
-            <div className="bento-title" style={{ color: "#0f172a" }}>
+          <motion.div variants={itemVariants} className="st-panel-card" style={{ background: "linear-gradient(135deg, #f8fafc, #f1f5f9)", border: "1px solid #cbd5e1" }}>
+            <div className="st-card-header" style={{ background: "transparent", borderBottom: "none", paddingBottom: 0 }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><rect x="7" y="7" width="3" height="3"></rect><rect x="14" y="7" width="3" height="3"></rect><rect x="7" y="14" width="3" height="3"></rect><rect x="14" y="14" width="3" height="3"></rect></svg>
-              Physical Store Tools
+              In-Store QR Tools
             </div>
 
-            <div className="standee-flex-row" style={{ display: "flex", gap: 32, alignItems: "center" }}>
+            <div className="st-card-body" style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: 32, alignItems: 'center' }}>
 
-              <div style={{ flex: 1 }}>
-                <h2 style={{ fontSize: "clamp(24px, 4vw, 32px)", fontWeight: 900, color: "#0f172a", margin: "0 0 12px 0", fontFamily: "'Nunito',sans-serif", lineHeight: 1.1, letterSpacing: "-0.02em", textAlign: isMobile ? "center" : "left" }}>
+              <div style={{ flex: 1, textAlign: isMobile ? 'center' : 'left' }}>
+                <h2 style={{ fontSize: "clamp(24px, 4vw, 32px)", fontWeight: 900, color: "#0f172a", margin: "0 0 12px 0", fontFamily: "'Nunito',sans-serif", lineHeight: 1.1, letterSpacing: "-0.02em" }}>
                   Printable Pay Standee
                 </h2>
-                <p style={{ fontSize: 15, color: "#475569", lineHeight: 1.6, marginBottom: 24, fontWeight: 500, textAlign: isMobile ? "center" : "left" }}>
-                  Generate an ultra-high resolution, print-ready QR standee. Scanning this automatically injects an <strong>OFFLINE-QR</strong> tracking tag into the blockchain so you can track in-store sales on your ledger.
+                <p style={{ margin: '0 0 24px', color: '#475569', fontSize: 15, lineHeight: 1.6, fontWeight: 500 }}>
+                  Download and print this static QR code for your counter. Scanning this automatically injects an <strong>OFFLINE-QR</strong> tracking tag into the blockchain so you can track in-store sales on your ledger.
                 </p>
-                <button onClick={handleDownloadStandee} disabled={isGeneratingStandee} className="bento-btn-primary" style={{ background: "linear-gradient(135deg, #10b981, #059669)", width: isMobile ? "100%" : "max-content", padding: "16px 32px" }}>
+                <button onClick={handleDownloadStandee} disabled={isGeneratingStandee} className="st-btn-primary" style={{ background: "linear-gradient(135deg, #10b981, #059669)", width: isMobile ? '100%' : 'max-content' }}>
                   {isGeneratingStandee ? "Rendering Canvas..." : (
                     <>
                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
@@ -545,24 +418,18 @@ export default function Settings() {
                 </button>
               </div>
 
-              {/* 🚀 Mobile-Optimized Interactive Preview Box */}
-              <div className="standee-preview-container" style={{ background: "#fff", padding: 16, borderRadius: 24, boxShadow: "0 20px 40px -10px rgba(0,0,0,0.1)", border: "4px solid #fff", position: "relative", transform: isMobile ? "rotate(0deg)" : "rotate(2deg)" }}>
+              {/* UI Preview Box showing the Logo inside the QR */}
+              <div style={{ width: 220, background: "#fff", padding: 16, borderRadius: 24, boxShadow: "0 20px 40px -10px rgba(0,0,0,0.1)", border: "4px solid #fff", margin: isMobile ? "0 auto" : 0 }}>
                 <div style={{ background: "linear-gradient(135deg, #10b981, #3b82f6)", height: 60, borderRadius: 12, marginBottom: 12 }} />
-
-                {/* Visual Fake QR Preview with Logo */}
-                <div style={{ width: "100%", aspectRatio: "1/1", background: "#f8fafc", borderRadius: 12, border: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
-                  <QRCodeCanvas value={offlineUri} size={140} level="H" fgColor="#0f172a" />
-                  {/* Fake UI Preview Logo Overlay */}
-                  <div style={{ position: "absolute", background: "#fff", borderRadius: "50%", width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", padding: 4 }}>
-                    {/* Miniature SVG representation of the logo just for the UI preview */}
-                    <svg width="24" height="24" viewBox="0 0 240 240" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M76 42V134 C76 160 94 178 120 178H186" stroke="#22C55E" strokeWidth="22" strokeLinecap="round" strokeLinejoin="round" />
-                      <rect x="44" y="24" width="64" height="64" rx="20" fill="#22C55E" />
-                      <rect x="154" y="146" width="64" height="64" rx="20" fill="#3B82F6" />
-                    </svg>
-                  </div>
+                <div style={{ width: "100%", aspectRatio: "1/1", background: "#f8fafc", borderRadius: 12, border: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <QRCodeCanvas
+                    value={offlineUri}
+                    size={140}
+                    level="H"
+                    fgColor="#0f172a"
+                    imageSettings={{ src: luxLogoSvgString, height: 35, width: 35, excavate: true }}
+                  />
                 </div>
-
                 <div style={{ height: 12, background: "#f1f5f9", borderRadius: 4, width: "60%", margin: "16px auto 0" }} />
               </div>
 
