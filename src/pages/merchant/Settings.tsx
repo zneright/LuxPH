@@ -283,7 +283,6 @@ export default function Settings() {
         .st-card-body { padding: 24px; display: flex; flex-direction: column; }
         
         .st-input { width: 100%; background: #f9fafb; border: 1px solid #d1d5db; border-radius: 16px; padding: 16px 20px; color: #111827; font-size: 15px; outline: none; box-sizing: border-box; font-family: 'DM Mono', monospace; font-weight: 600; transition: all 0.2s; }
-        .st-input:focus { border-color: #8b5cf6; background: #ffffff; box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.1); }
         
         .st-btn-primary { background: linear-gradient(135deg, #111827, #374151); color: #fff; border: none; border-radius: 16px; padding: 18px 24px; font-size: 15px; font-weight: 800; cursor: pointer; font-family: 'Nunito', sans-serif; display: inline-flex; align-items: center; justify-content: center; gap: 8px; transition: all 0.2s; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 100%; box-sizing: border-box; }
         .st-btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,0.2); }

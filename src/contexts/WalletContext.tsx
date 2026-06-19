@@ -2,7 +2,6 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { StellarWalletsKit, Networks as StellarKitNetworks } from '@creit.tech/stellar-wallets-kit';
 import { FreighterModule } from '@creit.tech/stellar-wallets-kit/modules/freighter';
 import { LobstrModule } from '@creit.tech/stellar-wallets-kit/modules/lobstr';
-// 🚀 WALLETCONNECT RESTORED: This is the ONLY way to get the "Approve Connection" popup in Lobstr on mobile web.
 import { WalletConnectModule } from '@creit.tech/stellar-wallets-kit/modules/wallet-connect';
 import { Networks } from '@stellar/stellar-sdk';
 import { useNetwork } from './NetworkContext';
@@ -53,10 +52,9 @@ class StellarWalletsKitAdapter implements WalletAdapter {
             document.head.appendChild(style);
         }
 
-        // xBull removed. WalletConnect active for mobile app approvals.
         const modules = [
             new WalletConnectModule({
-                projectId: '6c527328e4624dc4f1573f3c62b3833d',
+                projectId: '6c527328e4624dc4f1573f3c62b3833d', // Your connected Project ID
                 metadata: {
                     name: 'Lux PH Merchant',
                     description: 'Official Lux PH Merchant Dashboard',
@@ -72,7 +70,11 @@ class StellarWalletsKitAdapter implements WalletAdapter {
             StellarWalletsKit.init({
                 modules,
                 network,
-                authModal: { showInstallLabel: true, hideUnsupportedWallets: false },
+                authModal: {
+                    // 🚀 FIXED: Hides desktop extensions on mobile so they don't say "Install"
+                    showInstallLabel: false,
+                    hideUnsupportedWallets: true
+                },
             });
             this.initialized = true;
             return;
